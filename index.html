@@ -1,772 +1,462 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>コジバド!! - 試合作成</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#ff66b3" />
-  <link rel="stylesheet" href="style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-  <h1 class="title">コジバド!!</h1>
+<h1 class="title">コジバド!!</h1>
 
-  <div class="top-nav">
-    <a href="players.html">名簿管理</a>
-    <a href="attendance.html">参加チェック</a>
-    <a class="active" href="index.html">試合作成</a>
-  </div>
+<div class="top-nav">
+  <a href="players.html">名簿管理</a>
+  <a href="attendance.html">参加チェック</a>
+  <a class="active" href="index.html">試合作成</a>
+</div>
 
-  <!-- 試合設定 -->
-  <div class="setting-block">
-    <h2>試合設定</h2>
+<div class="setting-block">
+  <h2>試合設定</h2>
 
-    <label>コート数</label>
-    <select id="courtsSelect">
-      <option value="1">1コート</option>
-      <option value="2">2コート</option>
-      <option value="3">3コート</option>
-      <option value="4">4コート</option>
-    </select>
+  <label>コート数</label>
+  <select id="courtsSelect">
+    <option value="1">1コート</option>
+    <option value="2">2コート</option>
+    <option value="3">3コート</option>
+    <option value="4">4コート</option>
+  </select>
 
-    <div class="btn-row">
-      <button id="setupBtn" class="primary">第1試合を作成</button>
-      <button id="resetBtn" class="danger">最初からやり直す（データ初期化）</button>
+  <button id="setupBtn">第1試合を作成</button>
+</div>
+
+<div class="setting-block">
+  <h2>途中参加 / 途中抜け</h2>
+
+  <div class="two-col">
+    <div>
+      <label>途中参加（新規 or 復帰）</label>
+      <select id="joinSelect"></select>
+      <button id="joinBtn">途中参加を適用（次の試合から）</button>
     </div>
 
-    <p class="mini-note">
-      ※「参加チェック」で保存した人が対象だよ💖（4人以上必要）<br>
-      ※途中参加/途中抜けは下でいつでも変更OK✨
-    </p>
+    <div>
+      <label>途中抜け</label>
+      <select id="leaveSelect"></select>
+      <button id="leaveBtn" class="danger">途中抜けを適用（次の試合から）</button>
+    </div>
   </div>
+</div>
 
-  <!-- 途中参加/途中抜け（本格対応） -->
-  <div class="setting-block">
-    <h2>途中参加 / 途中抜け</h2>
+<div id="rounds" class="setting-block">
+  <h2>試合履歴</h2>
+  <p id="noRoundMsg">まだ試合がありません。</p>
+</div>
 
-    <label>途中参加（次の試合から参加）</label>
-    <select id="joinSelect"></select>
-    <button id="joinBtn">途中参加を反映</button>
+<div id="nextRoundContainer"></div>
 
-    <div style="height:10px;"></div>
+<div id="playerSummary" class="setting-block" style="display:none;">
+  <h2>プレイヤーステータス</h2>
+  <div id="playerTable"></div>
+</div>
 
-    <label>途中抜け（次の試合から不参加）</label>
-    <select id="leaveSelect"></select>
-    <button id="leaveBtn" class="danger">途中抜けを反映</button>
+<script src="common.js"></script>
 
-    <p class="mini-note">
-      ✅ 9試合目までの履歴はそのまま継承した上で、10試合目から組み直す感じだよ✨<br>
-      ✅ 途中参加は “欠席分を取り戻す” 追い上げ調整しない（連戦になりにくい）💖
-    </p>
-  </div>
+<script>
+let players = [];
+let roundNumber = 1;
+let schedule = {}; // { name: [{from,to},...] }
 
-  <!-- 試合履歴 -->
-  <div id="rounds" class="setting-block">
-    <h2>試合履歴</h2>
-    <p id="noRoundMsg" class="mini-note">まだ試合がありません。</p>
-  </div>
+const STATE_KEY = "matchState_v1";
 
-  <!-- 最新試合の下に出す -->
-  <div id="nextRoundContainer"></div>
+/* -----------------------
+   初期化
+----------------------- */
+window.onload = () => {
+  document.getElementById("setupBtn").onclick = setupFirstRound;
+  document.getElementById("joinBtn").onclick = applyJoin;
+  document.getElementById("leaveBtn").onclick = applyLeave;
 
-  <!-- ステータス -->
-  <div id="playerSummary" class="setting-block" style="display:none;">
-    <h2>プレイヤーステータス</h2>
-    <div id="playerTable"></div>
-  </div>
+  // 途中でリロードしても続きから動けるように
+  loadState();
+  repopulateSelects();
+  renderPlayerTable();
+};
 
-  <script>
-    /************************************************************
-     *  ストレージキー
-     ************************************************************/
-    const KEY_ALL = "allPlayers";
-    const KEY_ACTIVE = "activePlayers";
-    const KEY_STATE = "kojibado_state_v3";   // 試合継承用
-    const KEY_SCHEDULE = "scheduleData";     // 参加可否（途中参加/抜け）
+/* -----------------------
+   状態保存/復元
+----------------------- */
+function serializePlayer(p) {
+  return {
+    ...p,
+    partners: Array.from(p.partners || []),
+    opponents: Array.from(p.opponents || []),
+  };
+}
 
-    /************************************************************
-     *  取得/保存
-     ************************************************************/
-    function getAllPlayers() {
-      return JSON.parse(localStorage.getItem(KEY_ALL) || "[]");
-    }
-    function getActivePlayers() {
-      return JSON.parse(localStorage.getItem(KEY_ACTIVE) || "[]");
-    }
-    function setActivePlayers(arr) {
-      localStorage.setItem(KEY_ACTIVE, JSON.stringify(arr));
-    }
+function revivePlayer(p) {
+  const np = { ...p };
+  np.partners = new Set(p.partners || []);
+  np.opponents = new Set(p.opponents || []);
+  if (!np.partnersCount) np.partnersCount = {};
+  if (!np.opponentsCount) np.opponentsCount = {};
+  return np;
+}
 
-    function getSchedule() {
-      return JSON.parse(localStorage.getItem(KEY_SCHEDULE) || "{}");
-    }
-    function saveSchedule(s) {
-      localStorage.setItem(KEY_SCHEDULE, JSON.stringify(s));
-    }
+function saveState() {
+  const state = {
+    roundNumber,
+    schedule,
+    players: players.map(serializePlayer),
+    historyHtml: document.getElementById("rounds").innerHTML,
+    courts: document.getElementById("courtsSelect").value
+  };
+  localStorage.setItem(STATE_KEY, JSON.stringify(state));
+}
 
-    // playersのSetを保存できないので配列化
-    function serializePlayers(players) {
-      return players.map(p => ({
-        ...p,
-        partners: Array.from(p.partners || []),
-        opponents: Array.from(p.opponents || [])
-      }));
-    }
-    function deserializePlayers(players) {
-      return players.map(p => ({
-        ...p,
-        partners: new Set(p.partners || []),
-        opponents: new Set(p.opponents || []),
-      }));
-    }
+function loadState() {
+  const raw = localStorage.getItem(STATE_KEY);
+  if (!raw) return;
 
-    function saveState() {
-      const state = {
-        players: serializePlayers(players),
-        roundNumber,
-        matchHistory
-      };
-      localStorage.setItem(KEY_STATE, JSON.stringify(state));
-      saveSchedule(schedule);
+  try {
+    const s = JSON.parse(raw);
+    roundNumber = s.roundNumber || 1;
+    schedule = s.schedule || getSchedule() || {};
+    players = (s.players || []).map(revivePlayer);
+
+    // 履歴復元
+    if (s.historyHtml) {
+      document.getElementById("rounds").innerHTML = s.historyHtml;
+      const no = document.getElementById("noRoundMsg");
+      if (no) no.remove();
     }
 
-    function loadState() {
-      const raw = localStorage.getItem(KEY_STATE);
-      if (!raw) return false;
-      try {
-        const state = JSON.parse(raw);
-        players = deserializePlayers(state.players || []);
-        roundNumber = Number(state.roundNumber || 1);
-        matchHistory = state.matchHistory || [];
-        schedule = getSchedule();
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
+    if (s.courts) document.getElementById("courtsSelect").value = s.courts;
 
-    function clearAllData() {
-      localStorage.removeItem(KEY_STATE);
-      localStorage.removeItem(KEY_SCHEDULE);
-    }
-
-    /************************************************************
-     *  参加可能判定（scheduleData）
-     *  schedule[name] = [{from,to}, ...]
-     ************************************************************/
-    function isAvailableAtRound(name, r) {
-      const segs = schedule[name] || [];
-      return segs.some(seg => seg.from <= r && r <= seg.to);
-    }
-
-    function ensureDefaultScheduleForPlayers() {
-      // 既存playersに schedule が無ければ「ずっと参加」にする
-      players.forEach(p => {
-        if (!schedule[p.name] || schedule[p.name].length === 0) {
-          schedule[p.name] = [{ from: 1, to: 9999 }];
-        }
-      });
-    }
-
-    /************************************************************
-     *  プレイヤー初期化
-     ************************************************************/
-    function normalizePlayers(names) {
-      return names.map((name, idx) => ({
-        name,
-        idx,
-        games: 0,
-        refs: 0,
-        rests: 0,
-        partners: new Set(),
-        opponents: new Set(),
-        lastRoundPlayed: 0,
-        lastRefRound: 0,
-        lastRestRound: 0,
-        // 途中参加でも追いつかせないための基準（参加開始ラウンド）
-        joinRound: 1
-      }));
-    }
-
-    /************************************************************
-     *  最強公平（index側で完全制御）
-     *  - 同ペア/同対戦を強く避ける
-     *  - 連戦/連休憩も避ける
-     *  - 審判は「そのコートで試合してない人」から選ぶ（被り禁止）
-     *  - 途中参加は joinRound を使って「参加期間で割る」公平性にする（追いつかない）
-     ************************************************************/
-    const W = {
-      pairPenalty: 120,        // 同ペア被り激減
-      oppPenalty: 70,          // 同対戦被り激減
-      consecutivePlayPenalty: 25,
-      consecutiveRestPenalty: 18,
-      rateBalance: 40,         // 参加率の均一化
-      refBalance: 12,
-      restBalance: 12,
-      smallRandom: 0.01
-    };
-
-    function participationRate(p, currentRound) {
-      // joinRound以降の期間で割る（欠席分は追い上げさせない）
-      const span = Math.max(1, currentRound - (p.joinRound || 1) + 1);
-      return p.games / span;
-    }
-
-    function refRate(p, currentRound) {
-      const span = Math.max(1, currentRound - (p.joinRound || 1) + 1);
-      return p.refs / span;
-    }
-
-    function restRate(p, currentRound) {
-      const span = Math.max(1, currentRound - (p.joinRound || 1) + 1);
-      return p.rests / span;
-    }
-
-    function updateHistory(teamA, teamB) {
-      const pairs = [
-        [teamA[0], teamA[1]],
-        [teamB[0], teamB[1]]
-      ];
-      const opp = [
-        [teamA[0], teamB[0]], [teamA[0], teamB[1]],
-        [teamA[1], teamB[0]], [teamA[1], teamB[1]],
-      ];
-
-      pairs.forEach(([x,y]) => {
-        players[x].partners.add(y);
-        players[y].partners.add(x);
-      });
-      opp.forEach(([x,y]) => {
-        players[x].opponents.add(y);
-        players[y].opponents.add(x);
-      });
-    }
-
-    function bestSplitForFour(a,b,c,d) {
-      // 4人のペア分け3パターンを評価して最良を返す
-      const patterns = [
-        { A:[a,b], B:[c,d] },
-        { A:[a,c], B:[b,d] },
-        { A:[a,d], B:[b,c] },
-      ];
-
-      let best = null;
-      let bestScore = -Infinity;
-
-      for (const pat of patterns) {
-        const s = scoreTeams(pat.A, pat.B);
-        if (s > bestScore) {
-          bestScore = s;
-          best = pat;
-        }
-      }
-      return { ...best, score: bestScore };
-    }
-
-    function scoreTeams(teamA, teamB) {
-      let score = 0;
-
-      // ペア被り
-      if (players[teamA[0]].partners.has(teamA[1])) score -= W.pairPenalty;
-      if (players[teamB[0]].partners.has(teamB[1])) score -= W.pairPenalty;
-
-      // 対戦被り
-      const oppPairs = [
-        [teamA[0], teamB[0]], [teamA[0], teamB[1]],
-        [teamA[1], teamB[0]], [teamA[1], teamB[1]],
-      ];
-      oppPairs.forEach(([x,y]) => {
-        if (players[x].opponents.has(y)) score -= W.oppPenalty;
-      });
-
-      return score;
-    }
-
-    function scoreFourSet(four, r, activeIdx, avgRate, avgRefRate, avgRestRate) {
-      let score = 0;
-
-      // 連戦/連休憩の抑制
-      four.forEach(i => {
-        const p = players[i];
-
-        if (p.lastRoundPlayed === r-1) score -= W.consecutivePlayPenalty;
-        if (p.lastRestRound === r-1) score += 2; // 直前休憩はちょい優先（出してあげる）
-      });
-
-      // 参加率・審判率・休憩率の均等化（参加期間で割る）
-      four.forEach(i => {
-        const p = players[i];
-        const pr = participationRate(p, r);
-        score -= Math.abs(pr - avgRate) * W.rateBalance;
-
-        const rr = refRate(p, r);
-        score -= Math.abs(rr - avgRefRate) * W.refBalance;
-
-        const br = restRate(p, r);
-        score -= Math.abs(br - avgRestRate) * W.restBalance;
-      });
-
-      // 4人のベストペア分けで評価を加点
-      const split = bestSplitForFour(four[0], four[1], four[2], four[3]);
-      score += split.score;
-
-      // ちょいランダム
-      score += Math.random() * W.smallRandom;
-
-      return { score, split };
-    }
-
-    function pickReferee(refPool, r) {
-      // 審判は「審判率が低い」優先＋連続審判を避ける
-      let best = null;
-      let bestScore = Infinity;
-
-      refPool.forEach(i => {
-        const p = players[i];
-        let s = refRate(p, r);
-        if (p.lastRefRound === r-1) s += 999; // 連続審判は超避ける
-        if (s < bestScore) {
-          bestScore = s;
-          best = i;
-        }
-      });
-
-      return best;
-    }
-
-    function generateOneRound(r, courtCount) {
-      // このラウンド参加できる人
-      const activeIdx = players
-        .map((p, i) => i)
-        .filter(i => isAvailableAtRound(players[i].name, r));
-
-      if (activeIdx.length < 4) return null;
-
-      // 平均率（参加期間で割る）
-      const rates = activeIdx.map(i => participationRate(players[i], r));
-      const avgRate = rates.reduce((a,b)=>a+b,0) / rates.length;
-
-      const refRates = activeIdx.map(i => refRate(players[i], r));
-      const avgRefRate = refRates.reduce((a,b)=>a+b,0) / refRates.length;
-
-      const restRates = activeIdx.map(i => restRate(players[i], r));
-      const avgRestRate = restRates.reduce((a,b)=>a+b,0) / restRates.length;
-
-      const usedPlayers = new Set(); // 試合に出た人（このラウンド）
-      const rounds = [];
-
-      // ---- コートごとに「4人」を決める（全探索）
-      for (let c = 0; c < courtCount; c++) {
-        let best = null;
-
-        for (let a = 0; a < activeIdx.length; a++) {
-          for (let b = a+1; b < activeIdx.length; b++) {
-            for (let c1 = b+1; c1 < activeIdx.length; c1++) {
-              for (let d = c1+1; d < activeIdx.length; d++) {
-                const four = [activeIdx[a], activeIdx[b], activeIdx[c1], activeIdx[d]];
-                if (four.some(x => usedPlayers.has(x))) continue;
-
-                const judged = scoreFourSet(four, r, activeIdx, avgRate, avgRefRate, avgRestRate);
-                if (!best || judged.score > best.score) {
-                  best = { four, ...judged };
-                }
-              }
-            }
-          }
-        }
-
-        if (!best) break;
-
-        // そのコートのベスト分割
-        const teamA = best.split.A;
-        const teamB = best.split.B;
-
-        rounds.push({ teamA, teamB });
-
-        best.four.forEach(i => usedPlayers.add(i));
-        // 履歴はこの時点で更新（次コートの評価にも効く）
-        updateHistory(teamA, teamB);
-      }
-
-      if (rounds.length === 0) return null;
-
-      // ---- 審判選定（被り禁止：そのコートの4人と同一不可）
-      // まずは「試合に出てない人」優先（いれば）
-      const nonPlaying = activeIdx.filter(i => !usedPlayers.has(i));
-
-      const refs = [];
-      const usedRefs = new Set();
-
-      for (let ci = 0; ci < rounds.length; ci++) {
-        const playingSet = new Set([
-          ...rounds[ci].teamA,
-          ...rounds[ci].teamB
-        ]);
-
-        // 優先：非試合者から、かつ既に他コートの審判に選ばれてない
-        let pool = nonPlaying.filter(i => !usedRefs.has(i) && !playingSet.has(i));
-
-        // 足りなければ：参加者全体から、かつコートの4人以外（被り禁止）
-        if (pool.length === 0) {
-          pool = activeIdx.filter(i => !usedRefs.has(i) && !playingSet.has(i));
-        }
-
-        const ref = pool.length > 0 ? pickReferee(pool, r) : null;
-        refs.push(ref);
-        if (ref !== null) usedRefs.add(ref);
-      }
-
-      // ---- 休憩は「参加者のうち、試合にも審判にも入ってない人」
-      const allPlayed = new Set();
-      rounds.forEach(m => {
-        m.teamA.forEach(i => allPlayed.add(i));
-        m.teamB.forEach(i => allPlayed.add(i));
-      });
-
-      const allRef = new Set(refs.filter(x => x !== null));
-      const benches = activeIdx.filter(i => !allPlayed.has(i) && !allRef.has(i));
-
-      return { rounds, refs, benches };
-    }
-
-    function applyRoundCounts(r, result) {
-      // 試合
-      result.rounds.forEach((m, idx) => {
-        const four = [...m.teamA, ...m.teamB];
-        four.forEach(i => {
-          players[i].games++;
-          players[i].lastRoundPlayed = r;
-        });
-      });
-
-      // 審判
-      result.refs.forEach(ref => {
-        if (ref === null) return;
-        players[ref].refs++;
-        players[ref].lastRefRound = r;
-      });
-
-      // 休憩
-      result.benches.forEach(i => {
-        players[i].rests++;
-        players[i].lastRestRound = r;
-      });
-    }
-
-    /************************************************************
-     *  画面表示
-     ************************************************************/
-    function escapeHTML(s) {
-      return String(s)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#39;");
-    }
-
-    function renderRoundCard(r, result) {
-      const roundsDiv = document.getElementById("rounds");
-      const noMsg = document.getElementById("noRoundMsg");
-      if (noMsg) noMsg.remove();
-
-      const box = document.createElement("div");
-      box.className = "match-round";
-
-      box.innerHTML = `<h3>第${r}試合</h3>`;
-
-      result.rounds.forEach((m, i) => {
-        const ref = result.refs[i];
-        const refName = (ref === null) ? "—" : escapeHTML(players[ref].name);
-
-        const card = document.createElement("div");
-        card.className = "match-card";
-        card.innerHTML = `
-          <div class="match-line">
-            <span class="badge">コート${i+1}</span>
-            <span class="ref">審判：${refName}</span>
-          </div>
-          <div class="teams">
-            <div class="team">
-              <span class="teamLabel">A</span>
-              <span class="names">${escapeHTML(players[m.teamA[0]].name)} ＆ ${escapeHTML(players[m.teamA[1]].name)}</span>
-            </div>
-            <div class="vs">vs</div>
-            <div class="team">
-              <span class="teamLabel">B</span>
-              <span class="names">${escapeHTML(players[m.teamB[0]].name)} ＆ ${escapeHTML(players[m.teamB[1]].name)}</span>
-            </div>
-          </div>
-        `;
-        box.appendChild(card);
-      });
-
-      if (result.benches.length > 0) {
-        const rest = document.createElement("p");
-        rest.className = "mini-note";
-        rest.textContent = "休憩： " + result.benches.map(i => players[i].name).join(" / ");
-        box.appendChild(rest);
-      }
-
-      roundsDiv.appendChild(box);
-
-      // 最新試合の下にボタン
-      const btnArea = document.getElementById("nextRoundContainer");
-      btnArea.innerHTML = `
-        <button class="primary" id="nextBtn">次の試合を作成</button>
-      `;
-      document.getElementById("nextBtn").onclick = () => createNextRound();
-    }
-
-    function renderPlayerTable() {
-      const area = document.getElementById("playerTable");
-
-      let html = `
-        <table>
-          <tr>
-            <th>名前</th>
-            <th>試合</th>
-            <th>審判</th>
-            <th>休憩</th>
-          </tr>
-      `;
-
-      players.forEach(p => {
-        html += `
-          <tr>
-            <td>${escapeHTML(p.name)}</td>
-            <td>${p.games}</td>
-            <td>${p.refs}</td>
-            <td>${p.rests}</td>
-          </tr>
-        `;
-      });
-
-      html += `</table>`;
-      area.innerHTML = html;
-
+    if (players.length > 0) {
       document.getElementById("playerSummary").style.display = "block";
+      // 次の試合ボタンも復元
+      document.getElementById("nextRoundContainer").innerHTML =
+        `<button onclick="createNextRound()">次の試合を作成</button>`;
     }
+  } catch (e) {
+    console.log("state復元失敗", e);
+  }
+}
 
-    function repopulateSelects() {
-      // 途中参加候補：名簿(allPlayers)から、playersにまだいない人
-      const all = getAllPlayers();
-      const exists = new Set(players.map(p => p.name));
-      const joinCandidates = all.filter(n => !exists.has(n));
+/* -----------------------
+   第1試合を作成
+----------------------- */
+function setupFirstRound() {
+  const activeNames = getActivePlayers();
 
-      const joinSel = document.getElementById("joinSelect");
-      joinSel.innerHTML = "";
-      if (joinCandidates.length === 0) {
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.textContent = "（途中参加候補なし）";
-        joinSel.appendChild(opt);
-      } else {
-        joinCandidates.forEach(n => {
-          const opt = document.createElement("option");
-          opt.value = n;
-          opt.textContent = n;
-          joinSel.appendChild(opt);
-        });
-      }
+  if (!activeNames || activeNames.length < 4) {
+    alert("参加者は4人以上必要だよ💦（参加チェックで選んでね）");
+    return;
+  }
 
-      // 途中抜け候補：playersにいる人（ただし次試合以降参加できる予定の人だけ表示）
-      const leaveSel = document.getElementById("leaveSelect");
-      leaveSel.innerHTML = "";
+  // ★超重要：common.js の normalizePlayers を使う
+  players = normalizePlayers(activeNames);
 
-      const leaveCandidates = players
-        .filter(p => isAvailableAtRound(p.name, roundNumber)) // 今参加できる＝次も参加中の可能性が高い
-        .map(p => p.name);
+  // スケジュール初期化：全員ずっと参加
+  schedule = {};
+  players.forEach(p => {
+    schedule[p.name] = [{ from: 1, to: 9999 }];
+  });
+  saveSchedule(schedule);
 
-      if (leaveCandidates.length === 0) {
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.textContent = "（途中抜け候補なし）";
-        leaveSel.appendChild(opt);
-      } else {
-        leaveCandidates.forEach(n => {
-          const opt = document.createElement("option");
-          opt.value = n;
-          opt.textContent = n;
-          leaveSel.appendChild(opt);
-        });
+  // 初期ラウンド
+  roundNumber = 1;
+
+  // 表示リセット
+  document.getElementById("rounds").innerHTML = "<h2>試合履歴</h2>";
+  document.getElementById("nextRoundContainer").innerHTML = "";
+  document.getElementById("playerSummary").style.display = "block";
+
+  repopulateSelects();
+  renderPlayerTable();
+  saveState();
+
+  createNextRound();
+}
+
+/* -----------------------
+   次の試合を作る
+----------------------- */
+function createNextRound() {
+  // schedule の最新を使う
+  schedule = getSchedule() || schedule || {};
+
+  // 念のため Set を保証
+  players = players.map(p => ({
+    ...p,
+    partners: p.partners instanceof Set ? p.partners : new Set(p.partners || []),
+    opponents: p.opponents instanceof Set ? p.opponents : new Set(p.opponents || []),
+    partnersCount: p.partnersCount || {},
+    opponentsCount: p.opponentsCount || {},
+  }));
+
+  const courtCount = Number(document.getElementById("courtsSelect").value);
+
+  const result = generateRound(
+    players,
+    roundNumber,
+    courtCount,
+    getAiWeights(),
+    schedule
+  );
+
+  if (!result || !result.rounds || result.rounds.length === 0) {
+    alert("もう組めないかも🥺（参加人数・コート数を見直してみて）");
+    return;
+  }
+
+  renderRound(result.rounds, result.refs, result.benches);
+  renderPlayerTable();
+  roundNumber++;
+
+  saveState();
+  repopulateSelects();
+}
+
+/* -----------------------
+   途中参加（新規 or 復帰）
+   - 抜けてた分を追い上げない（基準点リセット）
+----------------------- */
+function applyJoin() {
+  const name = document.getElementById("joinSelect").value;
+  if (!name) return;
+
+  // すでに次の試合で参加できるなら何もしない
+  if (isAvailableAtRound(name, roundNumber)) {
+    alert("もう参加中だよ💖");
+    return;
+  }
+
+  // schedule に参加区間を追加（次の試合から）
+  schedule = getSchedule() || schedule || {};
+  if (!schedule[name]) schedule[name] = [];
+  schedule[name].push({ from: roundNumber, to: 9999 });
+  saveSchedule(schedule);
+
+  // players にいるか？
+  let p = players.find(x => x.name === name);
+
+  if (!p) {
+    // 新規参加：playersに追加
+    const newIdx = players.length;
+    p = {
+      name,
+      idx: newIdx,
+      games: 0,
+      refs: 0,
+      rests: 0,
+      lastRoundPlayed: roundNumber - 1,
+      lastRefRound: 0,
+      lastRestRound: roundNumber - 1,
+      partnersCount: {},
+      opponentsCount: {},
+      partners: new Set(),
+      opponents: new Set(),
+
+      // ★追い上げ禁止の基準点
+      joinRound: roundNumber,
+      gamesAtJoin: 0,
+      refsAtJoin: 0,
+      restsAtJoin: 0
+    };
+    players.push(p);
+  } else {
+    // 復帰：追い上げ禁止（基準点を今に更新）
+    p.joinRound = roundNumber;
+    p.gamesAtJoin = p.games || 0;
+    p.refsAtJoin = p.refs || 0;
+    p.restsAtJoin = p.rests || 0;
+
+    // “復帰即連戦”になりづらくする軽いケア
+    p.lastRoundPlayed = Math.min(p.lastRoundPlayed || 0, roundNumber - 1);
+    p.lastRestRound = roundNumber - 1;
+  }
+
+  // activePlayersにも追加（整合）
+  const active = getActivePlayers();
+  if (!active.includes(name)) {
+    active.push(name);
+    setActivePlayers(active);
+  }
+
+  repopulateSelects();
+  renderPlayerTable();
+  saveState();
+
+  alert(`途中参加/復帰を反映したよ💖（${roundNumber}試合目から）`);
+}
+
+/* -----------------------
+   途中抜け（次の試合から不参加）
+----------------------- */
+function applyLeave() {
+  const name = document.getElementById("leaveSelect").value;
+  if (!name) return;
+
+  if (!isAvailableAtRound(name, roundNumber)) {
+    alert("その人は今もう参加してないよ🥺");
+    return;
+  }
+
+  schedule = getSchedule() || schedule || {};
+  if (!schedule[name]) schedule[name] = [{ from: 1, to: 9999 }];
+
+  // 今のroundNumberを含む区間を探して to を roundNumber-1 に
+  const segs = schedule[name];
+  for (const seg of segs) {
+    if (seg.from <= roundNumber && roundNumber <= seg.to) {
+      seg.to = roundNumber - 1;
+      break;
+    }
+  }
+  saveSchedule(schedule);
+
+  repopulateSelects();
+  saveState();
+  alert(`途中抜けを反映したよ🥺（${roundNumber}試合目から不参加）`);
+}
+
+/* -----------------------
+   プルダウン再構築
+   - 途中参加：新規 + 復帰（今不参加の人）
+   - 途中抜け：今参加中の人
+----------------------- */
+function repopulateSelects() {
+  const all = getAllPlayers();
+  const byName = new Map(players.map(p => [p.name, p]));
+
+  // join候補：①playersにいない ②playersにいるけど今不参加（復帰）
+  const joinCandidates = [];
+  all.forEach(name => {
+    const p = byName.get(name);
+    if (!p) {
+      joinCandidates.push({ name, kind: "new" });
+    } else {
+      if (!isAvailableAtRound(name, roundNumber)) {
+        joinCandidates.push({ name, kind: "return" });
       }
     }
+  });
 
-    /************************************************************
-     *  メイン状態
-     ************************************************************/
-    let players = [];
-    let roundNumber = 1;
-    let matchHistory = []; // {round, result}
-    let schedule = {};
-
-    /************************************************************
-     *  初期化（第1試合）
-     ************************************************************/
-    function setupFirstRound() {
-      const activeNames = getActivePlayers();
-      if (!activeNames || activeNames.length < 4) {
-        alert("参加者は4人以上必要だよ💦（参加チェックで保存してね）");
-        return;
-      }
-
-      players = normalizePlayers(activeNames);
-
-      // schedule初期化：全員ずっと参加
-      schedule = {};
-      players.forEach(p => {
-        schedule[p.name] = [{ from: 1, to: 9999 }];
-        p.joinRound = 1;
-      });
-      saveSchedule(schedule);
-
-      roundNumber = 1;
-      matchHistory = [];
-
-      document.getElementById("rounds").innerHTML = "<h2>試合履歴</h2><p id='noRoundMsg' class='mini-note'>まだ試合がありません。</p>";
-      document.getElementById("nextRoundContainer").innerHTML = "";
-
-      ensureDefaultScheduleForPlayers();
-      repopulateSelects();
-
-      createNextRound();
-    }
-
-    /************************************************************
-     *  次の試合
-     ************************************************************/
-    function createNextRound() {
-      ensureDefaultScheduleForPlayers();
-
-      const courtCount = Number(document.getElementById("courtsSelect").value);
-
-      const result = generateOneRound(roundNumber, courtCount);
-      if (!result) {
-        alert("もう組めないかも🥺（参加できる人が少ない/条件が厳しい）");
-        return;
-      }
-
-      // カウント反映
-      applyRoundCounts(roundNumber, result);
-
-      // 履歴保存
-      matchHistory.push({ round: roundNumber, result });
-      renderRoundCard(roundNumber, result);
-      renderPlayerTable();
-      repopulateSelects();
-
-      roundNumber++;
-      saveState();
-    }
-
-    /************************************************************
-     *  途中参加 / 途中抜け（次の試合から反映）
-     ************************************************************/
-    function applyJoin() {
-      const name = document.getElementById("joinSelect").value;
-      if (!name) return;
-
-      // playersに追加
-      const newIdx = players.length;
-      players.push({
-        name,
-        idx: newIdx,
-        games: 0,
-        refs: 0,
-        rests: 0,
-        partners: new Set(),
-        opponents: new Set(),
-        lastRoundPlayed: roundNumber - 1, // 追いつかせない（加入直後の連戦抑制）
-        lastRefRound: 0,
-        lastRestRound: roundNumber - 1,
-        joinRound: roundNumber            // 参加開始ラウンド
-      });
-
-      // schedule：この試合（次の試合＝roundNumber）から参加
-      schedule[name] = [{ from: roundNumber, to: 9999 }];
-      saveSchedule(schedule);
-
-      // activePlayersにも追加（次回参加チェックを開いたとき整合が崩れないように）
-      const active = getActivePlayers();
-      if (!active.includes(name)) {
-        active.push(name);
-        setActivePlayers(active);
-      }
-
-      repopulateSelects();
-      saveState();
-      alert(`途中参加を反映したよ💖（${roundNumber}試合目から参加）`);
-    }
-
-    function applyLeave() {
-      const name = document.getElementById("leaveSelect").value;
-      if (!name) return;
-
-      // schedule：次の試合から不参加（＝ roundNumber-1 まで参加）
-      if (!schedule[name] || schedule[name].length === 0) {
-        schedule[name] = [{ from: 1, to: roundNumber - 1 }];
-      } else {
-        // 全セグメントの最後を詰める
-        schedule[name][schedule[name].length - 1].to = roundNumber - 1;
-      }
-      saveSchedule(schedule);
-
-      repopulateSelects();
-      saveState();
-      alert(`途中抜けを反映したよ🥺（${roundNumber}試合目から不参加）`);
-    }
-
-    /************************************************************
-     *  復元
-     ************************************************************/
-    function restoreUIFromHistory() {
-      document.getElementById("rounds").innerHTML = "<h2>試合履歴</h2>";
-      if (matchHistory.length === 0) {
-        const p = document.createElement("p");
-        p.id = "noRoundMsg";
-        p.className = "mini-note";
-        p.textContent = "まだ試合がありません。";
-        document.getElementById("rounds").appendChild(p);
-      } else {
-        matchHistory.forEach(h => {
-          renderRoundCard(h.round, h.result);
-        });
-      }
-      renderPlayerTable();
-      repopulateSelects();
-    }
-
-    /************************************************************
-     *  起動
-     ************************************************************/
-    window.addEventListener("DOMContentLoaded", () => {
-      // 状態があれば復元
-      const restored = loadState();
-      schedule = getSchedule();
-
-      document.getElementById("setupBtn").addEventListener("click", setupFirstRound);
-
-      document.getElementById("resetBtn").addEventListener("click", () => {
-        if (!confirm("ほんとに最初から？（試合履歴も消えるよ）")) return;
-        clearAllData();
-        location.reload();
-      });
-
-      document.getElementById("joinBtn").addEventListener("click", applyJoin);
-      document.getElementById("leaveBtn").addEventListener("click", applyLeave);
-
-      if (restored) {
-        ensureDefaultScheduleForPlayers();
-        restoreUIFromHistory();
-      } else {
-        // 初期状態（何も作ってない）
-        schedule = getSchedule();
-        repopulateSelects();
-      }
+  const joinSel = document.getElementById("joinSelect");
+  joinSel.innerHTML = "";
+  if (joinCandidates.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "（途中参加/復帰候補なし）";
+    joinSel.appendChild(opt);
+  } else {
+    joinCandidates.forEach(obj => {
+      const opt = document.createElement("option");
+      opt.value = obj.name;
+      opt.textContent = obj.kind === "return" ? `【復帰】${obj.name}` : obj.name;
+      joinSel.appendChild(opt);
     });
-  </script>
+  }
+
+  const leaveSel = document.getElementById("leaveSelect");
+  leaveSel.innerHTML = "";
+  const leaveCandidates = players
+    .filter(p => isAvailableAtRound(p.name, roundNumber))
+    .map(p => p.name);
+
+  if (leaveCandidates.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "（途中抜け候補なし）";
+    leaveSel.appendChild(opt);
+  } else {
+    leaveCandidates.forEach(name => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      leaveSel.appendChild(opt);
+    });
+  }
+}
+
+/* -----------------------
+   表示：試合履歴
+----------------------- */
+function renderRound(rounds, refs, benches) {
+  const area = document.getElementById("rounds");
+  const no = document.getElementById("noRoundMsg");
+  if (no) no.remove();
+
+  const box = document.createElement("div");
+  box.className = "match-round";
+
+  const title = document.createElement("h3");
+  title.textContent = `第${roundNumber}試合`;
+  box.appendChild(title);
+
+  rounds.forEach((r, i) => {
+    const card = document.createElement("div");
+    card.className = "match-card";
+
+    const a1 = players[r.teamA[0]]?.name ?? "?";
+    const a2 = players[r.teamA[1]]?.name ?? "?";
+    const b1 = players[r.teamB[0]]?.name ?? "?";
+    const b2 = players[r.teamB[1]]?.name ?? "?";
+    const refName = players[refs[i]]?.name ?? "?";
+
+    card.innerHTML = `
+      <div class="court-line">コート${i + 1} <span class="ref">（審判：${refName}）</span></div>
+      <div class="teams">
+        <div class="team">Team A：<b>${a1}</b> ＆ <b>${a2}</b></div>
+        <div class="vs">vs</div>
+        <div class="team">Team B：<b>${b1}</b> ＆ <b>${b2}</b></div>
+      </div>
+    `;
+    box.appendChild(card);
+  });
+
+  // 休憩は第1試合のところに出したくないって言ってたから “表示しない” ままにしてるよ💖
+  area.appendChild(box);
+
+  // 最新試合の下に「次の試合」ボタン
+  document.getElementById("nextRoundContainer").innerHTML =
+    `<button onclick="createNextRound()">次の試合を作成</button>`;
+}
+
+/* -----------------------
+   表示：ステータス
+----------------------- */
+function renderPlayerTable() {
+  if (!players || players.length === 0) return;
+
+  let html = `
+    <table class="status-table">
+      <tr>
+        <th>名前</th>
+        <th>試合</th>
+        <th>審判</th>
+        <th>休憩</th>
+      </tr>
+  `;
+
+  players.forEach(p => {
+    html += `
+      <tr>
+        <td>${p.name}</td>
+        <td>${p.games || 0}</td>
+        <td>${p.refs || 0}</td>
+        <td>${p.rests || 0}</td>
+      </tr>
+    `;
+  });
+
+  html += "</table>";
+  document.getElementById("playerTable").innerHTML = html;
+}
+</script>
 
 </body>
 </html>

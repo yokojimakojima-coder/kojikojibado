@@ -1,112 +1,132 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <title>コジバド!! - 参加チェック</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>参加チェック - コジバド!!</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
 
-<h1 class="title">コジバド!!</h1>
+  <h1 class="title">コジバド!!</h1>
 
-<div class="top-nav">
-  <a href="players.html">名簿管理</a>
-  <a class="active" href="attendance.html">参加チェック</a>
-  <a href="index.html">試合作成</a>
-</div>
-
-<div class="panel">
-  <h2>今日の参加者</h2>
-  <p class="muted">※ 今日来ている人にチェックしてね</p>
-
-  <ul id="activeList" style="list-style:none; padding:0; margin:0;"></ul>
-
-  <div style="display:flex; gap:10px; margin-top:10px;">
-    <button class="btn secondary" onclick="checkAll()">全員ON</button>
-    <button class="btn danger" onclick="uncheckAll()">全員OFF</button>
+  <div class="top-nav">
+    <a href="players.html">名簿管理</a>
+    <a class="active" href="attendance.html">参加チェック</a>
+    <a href="index.html">試合作成</a>
   </div>
 
-  <button class="btn primary" style="margin-top:12px;" onclick="saveActivePlayers()">
-    参加者を保存 → 試合作成へ
-  </button>
-</div>
+  <div class="setting-block">
+    <h2>参加チェック</h2>
+    <p class="mini-note">
+      今日来てる人に✔して「保存」してね💖<br>
+      ※保存しないと試合作成に反映されないよ！
+    </p>
 
-<script src="common.js"></script>
+    <div class="btn-row">
+      <button id="allOnBtn">全員ON</button>
+      <button id="allOffBtn" class="danger">全員OFF</button>
+    </div>
+  </div>
 
-<script>
-/* =========================
-   初期表示
-========================= */
-window.onload = () => {
-  loadAttendance();
-};
+  <div class="setting-block">
+    <h2>今日の参加者</h2>
+    <ul id="activeList" style="padding-left:0; margin:0;"></ul>
 
-/* =========================
-   名簿 → 参加チェック表示
-========================= */
-function loadAttendance() {
-  const list = document.getElementById("activeList");
-  list.innerHTML = "";
+    <button id="saveBtn" class="primary">参加者を保存 → 試合作成へ</button>
+  </div>
 
-  const allPlayers = JSON.parse(localStorage.getItem("allPlayers") || "[]");
-  const active = JSON.parse(localStorage.getItem("activePlayers") || "[]");
+  <script>
+    // -----------------------------
+    // localStorageキー
+    // -----------------------------
+    const KEY_ALL = "allPlayers";       // 名簿
+    const KEY_ACTIVE = "activePlayers"; // 今日の参加者
 
-  if (allPlayers.length === 0) {
-    list.innerHTML = `<li class="muted">名簿がまだだよ！先に登録してね</li>`;
-    return;
-  }
+    function getAllPlayers() {
+      return JSON.parse(localStorage.getItem(KEY_ALL) || "[]");
+    }
+    function getActivePlayers() {
+      return JSON.parse(localStorage.getItem(KEY_ACTIVE) || "[]");
+    }
+    function setActivePlayers(arr) {
+      localStorage.setItem(KEY_ACTIVE, JSON.stringify(arr));
+    }
 
-  allPlayers.forEach(name => {
-    const checked = active.includes(name) ? "checked" : "";
+    function escapeHTML(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
 
-    const li = document.createElement("li");
-    li.style.marginBottom = "10px";
+    function renderAttendance() {
+      const list = document.getElementById("activeList");
+      const all = getAllPlayers();
+      const active = new Set(getActivePlayers());
 
-    li.innerHTML = `
-      <div class="match-card">
-        <label style="display:flex; align-items:center; gap:12px;">
-          <input type="checkbox" class="chk" data-name="${name}" ${checked}>
-          <div class="team team-a">${name}</div>
-        </label>
-      </div>
-    `;
+      list.innerHTML = "";
 
-    list.appendChild(li);
-  });
-}
+      if (all.length === 0) {
+        const li = document.createElement("li");
+        li.className = "list-item";
+        li.innerHTML = `
+          <span style="font-weight:1000;color:#7a2e54;">
+            名簿が空だよ💦 先に「名簿管理」で名前を追加してね！
+          </span>
+        `;
+        list.appendChild(li);
+        return;
+      }
 
-/* =========================
-   全員ON / OFF
-========================= */
-function checkAll() {
-  document.querySelectorAll(".chk").forEach(cb => cb.checked = true);
-}
+      all.forEach((name) => {
+        const li = document.createElement("li");
+        li.className = "list-item";
 
-function uncheckAll() {
-  document.querySelectorAll(".chk").forEach(cb => cb.checked = false);
-}
+        const checked = active.has(name) ? "checked" : "";
+        li.innerHTML = `
+          <label class="checkline">
+            <input type="checkbox" class="chk" data-name="${escapeHTML(name)}" ${checked} />
+            <span class="name" style="font-weight:1000;color:#3b1841;">${escapeHTML(name)}</span>
+          </label>
+          <span class="drag">☰</span>
+        `;
 
-/* =========================
-   保存 → 試合作成
-========================= */
-function saveActivePlayers() {
-  const checked = [];
-  document.querySelectorAll(".chk").forEach(cb => {
-    if (cb.checked) checked.push(cb.dataset.name);
-  });
+        list.appendChild(li);
+      });
+    }
 
-  if (checked.length < 4) {
-    alert("4人以上選んでね💦");
-    return;
-  }
+    function setAllChecks(value) {
+      document.querySelectorAll(".chk").forEach(cb => { cb.checked = value; });
+    }
 
-  localStorage.setItem("activePlayers", JSON.stringify(checked));
-  alert("保存したよ！試合作成へ行こ💖");
-  location.href = "index.html";
-}
-</script>
+    function saveAndGo() {
+      const checked = [];
+      document.querySelectorAll(".chk").forEach(cb => {
+        if (cb.checked) checked.push(cb.dataset.name);
+      });
+
+      if (checked.length < 4) {
+        alert("参加者は4人以上必要だよ💦");
+        return;
+      }
+
+      setActivePlayers(checked);
+      alert("保存したよ💖 試合作成に移動するね！");
+      location.href = "index.html";
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      renderAttendance();
+
+      document.getElementById("allOnBtn").addEventListener("click", () => setAllChecks(true));
+      document.getElementById("allOffBtn").addEventListener("click", () => setAllChecks(false));
+      document.getElementById("saveBtn").addEventListener("click", saveAndGo);
+    });
+  </script>
 
 </body>
 </html>

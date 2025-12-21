@@ -1,124 +1,158 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <title>コジバド!! - 名簿管理</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>名簿管理 - コジバド!!</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
 
-<h1 class="title">コジバド!!</h1>
+  <h1 class="title">コジバド!!</h1>
 
-<div class="top-nav">
-  <a class="active" href="players.html">名簿管理</a>
-  <a href="attendance.html">参加チェック</a>
-  <a href="index.html">試合作成</a>
-</div>
+  <div class="top-nav">
+    <a class="active" href="players.html">名簿管理</a>
+    <a href="attendance.html">参加チェック</a>
+    <a href="index.html">試合作成</a>
+  </div>
 
-<div class="panel">
-  <h2>名前を追加</h2>
+  <div class="setting-block">
+    <h2>名簿管理</h2>
 
-  <input
-    id="newPlayer"
-    type="text"
-    placeholder="名前を入力（例：コジコジ）"
-    style="width:100%; padding:12px; font-size:16px; border-radius:10px; border:2px solid #ffb3d9;"
-  >
+    <label for="newPlayer">名前を入力（例：コジコジ）</label>
+    <input id="newPlayer" type="text" placeholder="例：コジコジ" autocomplete="off" />
 
-  <button class="btn primary" onclick="addPlayer()" style="margin-top:10px;">
-    追加する
-  </button>
-</div>
+    <button id="addBtn">追加</button>
 
-<div class="panel">
-  <h2>名簿一覧</h2>
-  <ul id="playerList" style="list-style:none; padding:0; margin:0;"></ul>
-  <p class="muted">※ ここに登録された名前が参加チェックに反映されます</p>
-</div>
+    <p class="mini-note">
+      ・ここで登録した名前が「参加チェック」に出るよ💖<br>
+      ・名前を追加したら、次は「参加チェック」で今日来てる人に✔してね
+    </p>
+  </div>
 
-<script src="common.js"></script>
+  <div class="setting-block">
+    <h2>登録済みメンバー</h2>
 
-<script>
-/* =========================
-   初期表示
-========================= */
-window.onload = () => {
-  loadPlayers();
-};
+    <ul id="playerList" style="padding-left:0; margin:0;"></ul>
 
-/* =========================
-   名簿表示
-========================= */
-function loadPlayers() {
-  const list = document.getElementById("playerList");
-  list.innerHTML = "";
+    <button id="clearBtn" style="background: linear-gradient(135deg,#ff6675,#ff3c5e);">
+      全削除（やり直し）
+    </button>
+  </div>
 
-  const players = JSON.parse(localStorage.getItem("allPlayers") || "[]");
+  <script>
+    // -----------------------------
+    // localStorageキー
+    // -----------------------------
+    const KEY_ALL = "allPlayers";      // 名簿
+    const KEY_ACTIVE = "activePlayers"; // 今日の参加者（attendanceで作る）
 
-  if (players.length === 0) {
-    list.innerHTML = `<li class="muted">まだ登録がありません</li>`;
-    return;
-  }
+    function getAllPlayers() {
+      return JSON.parse(localStorage.getItem(KEY_ALL) || "[]");
+    }
+    function setAllPlayers(arr) {
+      localStorage.setItem(KEY_ALL, JSON.stringify(arr));
+    }
 
-  players.forEach((name, index) => {
-    const li = document.createElement("li");
-    li.style.marginBottom = "10px";
+    function escapeHTML(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
 
-    li.innerHTML = `
-      <div class="match-card">
-        <div class="teams">
-          <div class="team team-a">${name}</div>
-          <button
-            onclick="deletePlayer(${index})"
-            style="background:#ff6675; color:white; border:none; border-radius:10px; padding:6px 12px; font-weight:bold;"
-          >
-            削除
-          </button>
-        </div>
-      </div>
-    `;
-    list.appendChild(li);
-  });
-}
+    function renderList() {
+      const ul = document.getElementById("playerList");
+      const players = getAllPlayers();
+      ul.innerHTML = "";
 
-/* =========================
-   追加
-========================= */
-function addPlayer() {
-  const input = document.getElementById("newPlayer");
-  const name = input.value.trim();
+      if (players.length === 0) {
+        const li = document.createElement("li");
+        li.className = "list-item";
+        li.innerHTML = `<span style="font-weight:900;color:#7a2e54;">まだ誰もいないよ〜💦 まず追加してね</span>`;
+        ul.appendChild(li);
+        return;
+      }
 
-  if (!name) {
-    alert("名前を入力してね💦");
-    return;
-  }
+      players.forEach((name, index) => {
+        const li = document.createElement("li");
+        li.className = "list-item";
+        li.innerHTML = `
+          <span class="drag">☰</span>
+          <span class="name" style="font-weight:1000;color:#3b1841;">${escapeHTML(name)}</span>
+          <button class="del-btn" data-index="${index}">削除</button>
+        `;
+        ul.appendChild(li);
+      });
 
-  const players = JSON.parse(localStorage.getItem("allPlayers") || "[]");
+      // 削除イベント（まとめて）
+      ul.querySelectorAll(".del-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.dataset.index);
+          const arr = getAllPlayers();
+          arr.splice(idx, 1);
+          setAllPlayers(arr);
 
-  if (players.includes(name)) {
-    alert("その名前はもうあるよ！");
-    return;
-  }
+          // もしactivePlayersに入ってたら消す（ズレ事故防止）
+          const active = JSON.parse(localStorage.getItem(KEY_ACTIVE) || "[]");
+          const filtered = active.filter(n => n !== arr[idx]);
+          localStorage.setItem(KEY_ACTIVE, JSON.stringify(filtered));
 
-  players.push(name);
-  localStorage.setItem("allPlayers", JSON.stringify(players));
+          renderList();
+        });
+      });
+    }
 
-  input.value = "";
-  loadPlayers();
-}
+    function addPlayer() {
+      const input = document.getElementById("newPlayer");
+      const name = (input.value || "").trim();
 
-/* =========================
-   削除
-========================= */
-function deletePlayer(index) {
-  const players = JSON.parse(localStorage.getItem("allPlayers") || "[]");
-  players.splice(index, 1);
-  localStorage.setItem("allPlayers", JSON.stringify(players));
-  loadPlayers();
-}
-</script>
+      if (!name) {
+        alert("名前を入れてね💖");
+        return;
+      }
+
+      const arr = getAllPlayers();
+
+      // 重複防止（完全一致）
+      if (arr.includes(name)) {
+        alert("それもう登録されてるっぽい💦（同じ名前）");
+        return;
+      }
+
+      arr.push(name);
+      setAllPlayers(arr);
+
+      input.value = "";
+      input.focus();
+      renderList();
+    }
+
+    function clearAll() {
+      if (!confirm("名簿をぜんぶ消すよ？（ガチで全消し）")) return;
+      localStorage.removeItem(KEY_ALL);
+      localStorage.removeItem(KEY_ACTIVE);
+      // scheduleDataはindex側で作るから、ここでは触らなくてOK（必要なら消してもOK）
+      renderList();
+      alert("ぜんぶ消した！新しく作り直してね💖");
+    }
+
+    // 初期化
+    window.addEventListener("DOMContentLoaded", () => {
+      renderList();
+
+      document.getElementById("addBtn").addEventListener("click", addPlayer);
+
+      document.getElementById("newPlayer").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addPlayer();
+      });
+
+      document.getElementById("clearBtn").addEventListener("click", clearAll);
+    });
+  </script>
 
 </body>
 </html>

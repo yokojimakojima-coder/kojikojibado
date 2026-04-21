@@ -4,84 +4,93 @@
   <meta charset="UTF-8">
   <title>コジバド!! - 参加チェック</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css?v=20260422_03">
+  <link rel="stylesheet" href="style.css?v=20260422_10">
 </head>
 <body>
+
   <h1 class="title">コジバド!!</h1>
 
   <div class="top-nav">
-    <a href="players.html" class="nav-link">名簿管理</a>
-    <a href="attendance.html" class="nav-link active">参加チェック</a>
-    <a href="index.html" class="nav-link">試合作成</a>
+    <a href="players.html">名簿管理</a>
+    <a class="active" href="attendance.html">参加チェック</a>
+    <a href="index.html">試合作成</a>
   </div>
 
   <div class="setting-block">
     <h2>参加チェック</h2>
-    <p class="hint">今日来てる人にチェックしてね💖</p>
 
-    <div class="row">
-      <button id="allOn" class="small">全員ON</button>
-      <button id="allOff" class="small danger">全員OFF</button>
+    <div class="vertical-form">
+      <button id="allOnBtn" class="main-btn">全員ON</button>
+      <button id="allOffBtn" class="danger-btn">全員OFF</button>
     </div>
 
-    <div id="checks" class="check-list"></div>
-
-    <button id="saveBtn">参加者を保存 → 試合作成へ</button>
+    <div id="attendanceList" class="attendance-list"></div>
   </div>
 
-  <script src="common.js?v=20260422_03"></script>
+  <script src="common.js?v=20260422_10"></script>
   <script>
-    function render() {
-      const all = getAllPlayers();
-      const active = new Set(getActivePlayers());
+    function getPlayersSafe() {
+      return getAllPlayers ? getAllPlayers() : JSON.parse(localStorage.getItem("allPlayers") || "[]");
+    }
 
-      const box = document.getElementById("checks");
-      box.innerHTML = "";
+    function getActiveSafe() {
+      return getActivePlayers ? getActivePlayers() : JSON.parse(localStorage.getItem("activePlayers") || "[]");
+    }
 
-      if (!all || all.length === 0) {
-        box.innerHTML = `<p class="hint">名簿が空だよ。先に「名簿管理」で追加してね🙏</p>`;
+    function saveActiveSafe(activePlayers) {
+      localStorage.setItem("activePlayers", JSON.stringify(activePlayers));
+    }
+
+    function renderAttendance() {
+      const allPlayers = getPlayersSafe();
+      const activePlayers = getActiveSafe();
+      const list = document.getElementById("attendanceList");
+
+      list.innerHTML = "";
+
+      if (allPlayers.length === 0) {
+        list.innerHTML = `<div class="empty-message">先に名簿管理で名前を登録してね</div>`;
         return;
       }
 
-      all.forEach(name => {
-        const id = "cb_" + name;
-        const line = document.createElement("label");
-        line.className = "check-item";
-        line.innerHTML = `
-          <input type="checkbox" class="chk" data-name="${name}" ${active.has(name) ? "checked" : ""}>
+      allPlayers.forEach((name) => {
+        const checked = activePlayers.includes(name);
+
+        const row = document.createElement("label");
+        row.className = "attendance-row";
+        row.innerHTML = `
+          <input type="checkbox" value="${name}" ${checked ? "checked" : ""}>
           <span>${name}</span>
         `;
-        box.appendChild(line);
+        list.appendChild(row);
+      });
+
+      bindCheckboxEvents();
+    }
+
+    function bindCheckboxEvents() {
+      const checkboxes = document.querySelectorAll('#attendanceList input[type="checkbox"]');
+      checkboxes.forEach(cb => {
+        cb.addEventListener("change", () => {
+          const active = Array.from(checkboxes)
+            .filter(x => x.checked)
+            .map(x => x.value);
+
+          saveActiveSafe(active);
+        });
       });
     }
 
-    document.getElementById("allOn").addEventListener("click", () => {
-      document.querySelectorAll(".chk").forEach(cb => cb.checked = true);
-    });
-    document.getElementById("allOff").addEventListener("click", () => {
-      document.querySelectorAll(".chk").forEach(cb => cb.checked = false);
-    });
+    function setAllAttendance(flag) {
+      const allPlayers = getPlayersSafe();
+      saveActiveSafe(flag ? allPlayers : []);
+      renderAttendance();
+    }
 
-    document.getElementById("saveBtn").addEventListener("click", () => {
-      const checked = [];
-      document.querySelectorAll(".chk").forEach(cb => {
-        if (cb.checked) checked.push(cb.dataset.name);
-      });
+    document.getElementById("allOnBtn").addEventListener("click", () => setAllAttendance(true));
+    document.getElementById("allOffBtn").addEventListener("click", () => setAllAttendance(false));
 
-      if (checked.length < 4) {
-        alert("4人以上チェックしてね💦");
-        return;
-      }
-
-      setActivePlayers(checked);
-
-      // stateは継続したいなら消さない。初期化したいなら消す。
-      localStorage.removeItem("kojibado_state_v5");
-      alert("保存したよ💖 試合作成へ移動するね！");
-      location.href = "index.html";
-    });
-
-    render();
+    renderAttendance();
   </script>
 </body>
 </html>

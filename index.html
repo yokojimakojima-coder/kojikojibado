@@ -1,59 +1,377 @@
-function repopulateSelects() {
-  const all = getAllPlayers();          // 名簿
-  const active = getActivePlayers();    // 今日参加チェック済み
-  const byName = new Map(players.map(p => [p.name, p]));
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>コジバド!! - 試合作成</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css?v=20260422_03">
+</head>
 
-  // ✅ join候補は「名簿」優先、名簿が空なら「参加チェック」を使う
-  const source = (all && all.length > 0) ? all : active;
+<body>
+  <h1 class="title">コジバド!!</h1>
 
-  const joinCandidates = [];
-  source.forEach(name => {
-    const p = byName.get(name);
-    if (!p) {
-      joinCandidates.push({ name, kind: "new" });
-    } else {
-      // playersにはいるが、今は不参加（抜け）→復帰候補
-      if (!isAvailableAtRound(name, roundNumber, schedule)) {
-        joinCandidates.push({ name, kind: "return" });
+  <div class="top-nav">
+    <a href="players.html" class="nav-link">名簿管理</a>
+    <a href="attendance.html" class="nav-link">参加チェック</a>
+    <a href="index.html" class="nav-link active">試合作成</a>
+  </div>
+
+  <div class="setting-block">
+    <h2>試合設定</h2>
+    <label>コート数</label>
+    <select id="courtsSelect">
+      <option value="1">1コート</option>
+      <option value="2">2コート</option>
+      <option value="3">3コート</option>
+      <option value="4">4コート</option>
+    </select>
+
+    <button id="setupBtn">第1試合を作成</button>
+    <p class="hint">※参加チェックで人数を選んでから押してね</p>
+  </div>
+
+  <div class="setting-block">
+    <h2>途中参加 / 途中抜け</h2>
+
+    <div class="two-col">
+      <div>
+        <label>途中参加（新規 or 復帰）</label>
+        <select id="joinSelect"></select>
+        <button id="joinBtn">途中参加を適用（次の試合から）</button>
+      </div>
+
+      <div>
+        <label>途中抜け</label>
+        <select id="leaveSelect"></select>
+        <button id="leaveBtn" class="danger">途中抜けを適用（次の試合から）</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="rounds" class="setting-block">
+    <h2>試合履歴</h2>
+    <p id="noRoundMsg">まだ試合がありません。</p>
+  </div>
+
+  <div id="nextRoundContainer"></div>
+
+  <div id="playerSummary" class="setting-block" style="display:none;">
+    <h2>プレイヤーステータス</h2>
+    <div id="playerTable"></div>
+  </div>
+
+  <script src="common.js?v=20260422_03"></script>
+  <script>
+    const STATE_KEY = "kojibado_state_v5";
+    let players = [];
+    let roundNumber = 1;
+    let schedule = {};
+
+    // 旧PWAのService Workerが残ってたらスマホだけバグるので解除
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations()
+        .then(rs => rs.forEach(r => r.unregister()))
+        .catch(()=>{});
+    }
+
+    window.addEventListener("load", () => {
+      schedule = getSchedule() || {};
+      loadState();
+
+      document.getElementById("setupBtn").addEventListener("click", setupFirstRound);
+      document.getElementById("joinBtn").addEventListener("click", applyJoin);
+      document.getElementById("leaveBtn").addEventListener("click", applyLeave);
+
+      // タップ保険（Android）
+      document.querySelectorAll(".nav-link").forEach(a => {
+        a.addEventListener("touchend", () => {
+          location.href = a.getAttribute("href");
+        }, { passive: true });
+      });
+
+      repopulateSelects();
+      renderPlayerTable();
+    });
+
+    function saveState() {
+      const state = {
+        roundNumber,
+        schedule,
+        players,
+        historyHtml: document.getElementById("rounds").innerHTML,
+        courts: document.getElementById("courtsSelect").value
+      };
+      localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    }
+
+    function loadState() {
+      const raw = localStorage.getItem(STATE_KEY);
+      if (!raw) return;
+      try {
+        const s = JSON.parse(raw);
+        roundNumber = s.roundNumber || 1;
+        schedule = s.schedule || getSchedule() || {};
+        players = s.players || [];
+
+        if (s.historyHtml) {
+          document.getElementById("rounds").innerHTML = s.historyHtml;
+          const no = document.getElementById("noRoundMsg");
+          if (no) no.remove();
+        }
+        if (s.courts) document.getElementById("courtsSelect").value = s.courts;
+
+        if (players.length > 0) {
+          document.getElementById("playerSummary").style.display = "block";
+          document.getElementById("nextRoundContainer").innerHTML =
+            `<button onclick="createNextRound()">次の試合を作成</button>`;
+        }
+      } catch (e) {
+        console.log("state復元失敗", e);
       }
     }
-  });
 
-  const joinSel = document.getElementById("joinSelect");
-  joinSel.innerHTML = "";
+    function setupFirstRound() {
+      const activeNames = getActivePlayers();
+      if (!activeNames || activeNames.length < 4) {
+        alert("参加者は4人以上必要だよ💦（参加チェックで選んでね）");
+        return;
+      }
 
-  if (joinCandidates.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "（途中参加/復帰候補なし）";
-    joinSel.appendChild(opt);
-  } else {
-    joinCandidates.forEach(obj => {
-      const opt = document.createElement("option");
-      opt.value = obj.name;
-      opt.textContent = obj.kind === "return" ? `【復帰】${obj.name}` : obj.name;
-      joinSel.appendChild(opt);
-    });
-  }
+      players = normalizePlayers(activeNames);
 
-  // 途中抜け候補：今参加中の人
-  const leaveSel = document.getElementById("leaveSelect");
-  leaveSel.innerHTML = "";
-  const leaveCandidates = players
-    .filter(p => isAvailableAtRound(p.name, roundNumber, schedule))
-    .map(p => p.name);
+      // 全員参加のスケジュールを作る
+      schedule = {};
+      players.forEach(p => schedule[p.name] = [{ from: 1, to: 9999 }]);
+      saveSchedule(schedule);
 
-  if (leaveCandidates.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "（途中抜け候補なし）";
-    leaveSel.appendChild(opt);
-  } else {
-    leaveCandidates.forEach(name => {
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      leaveSel.appendChild(opt);
-    });
-  }
-}
+      roundNumber = 1;
+      document.getElementById("rounds").innerHTML = "<h2>試合履歴</h2>";
+      document.getElementById("nextRoundContainer").innerHTML = "";
+      document.getElementById("playerSummary").style.display = "block";
+
+      saveState();
+      repopulateSelects();
+      renderPlayerTable();
+      createNextRound();
+    }
+
+    function createNextRound() {
+      schedule = getSchedule() || schedule || {};
+
+      const courtCount = Number(document.getElementById("courtsSelect").value);
+      const result = generateRound(players, roundNumber, courtCount, getAiWeights(), schedule);
+
+      if (!result || !result.rounds || result.rounds.length === 0) {
+        alert("もう組めないかも🥺（人数・コート数・途中参加/抜け設定を確認してね）");
+        return;
+      }
+
+      renderRound(result.rounds, result.refs);
+      renderPlayerTable();
+
+      roundNumber++;
+      saveState();
+      repopulateSelects();
+    }
+
+    function renderRound(rounds, refs) {
+      const area = document.getElementById("rounds");
+      const no = document.getElementById("noRoundMsg");
+      if (no) no.remove();
+
+      const box = document.createElement("div");
+      box.className = "match-round";
+      box.innerHTML = `<h3>第${roundNumber}試合</h3>`;
+
+      rounds.forEach((r, i) => {
+        const card = document.createElement("div");
+        card.className = "match-card";
+        const refName = players[refs[i]]?.name ?? "?";
+
+        card.innerHTML = `
+          <div class="court-line">コート${i + 1}<span class="ref">（審判：${refName}）</span></div>
+          <div class="teams">
+            <div class="team">Team A：<b>${players[r.teamA[0]]?.name ?? "?"}</b> ＆ <b>${players[r.teamA[1]]?.name ?? "?"}</b></div>
+            <div class="vs">vs</div>
+            <div class="team">Team B：<b>${players[r.teamB[0]]?.name ?? "?"}</b> ＆ <b>${players[r.teamB[1]]?.name ?? "?"}</b></div>
+          </div>
+        `;
+        box.appendChild(card);
+      });
+
+      area.appendChild(box);
+
+      document.getElementById("nextRoundContainer").innerHTML =
+        `<button onclick="createNextRound()">次の試合を作成</button>`;
+    }
+
+    function renderPlayerTable() {
+      if (!players || players.length === 0) return;
+
+      let html = `
+        <table class="status-table">
+          <tr><th>名前</th><th>試合</th><th>審判</th><th>休憩</th></tr>
+      `;
+      players.forEach(p => {
+        html += `
+          <tr>
+            <td>${p.name}</td>
+            <td>${p.games ?? 0}</td>
+            <td>${p.refs ?? 0}</td>
+            <td>${p.rests ?? 0}</td>
+          </tr>
+        `;
+      });
+      html += `</table>`;
+      document.getElementById("playerTable").innerHTML = html;
+    }
+
+    // ★ここがあなたが貼ってくれた最新repopulateSelects（保険付き）
+    function repopulateSelects() {
+      schedule = getSchedule() || schedule || {};
+
+      const all = getAllPlayers();          // 名簿
+      const active = getActivePlayers();    // 今日参加チェック済み
+      const byName = new Map(players.map(p => [p.name, p]));
+
+      const source = (all && all.length > 0) ? all : active;
+
+      const joinCandidates = [];
+      source.forEach(name => {
+        const p = byName.get(name);
+        if (!p) {
+          joinCandidates.push({ name, kind: "new" });
+        } else {
+          if (!isAvailableAtRound(name, roundNumber, schedule)) {
+            joinCandidates.push({ name, kind: "return" });
+          }
+        }
+      });
+
+      const joinSel = document.getElementById("joinSelect");
+      joinSel.innerHTML = "";
+
+      if (joinCandidates.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "（途中参加/復帰候補なし）";
+        joinSel.appendChild(opt);
+      } else {
+        joinCandidates.forEach(obj => {
+          const opt = document.createElement("option");
+          opt.value = obj.name;
+          opt.textContent = obj.kind === "return" ? `【復帰】${obj.name}` : obj.name;
+          joinSel.appendChild(opt);
+        });
+      }
+
+      const leaveSel = document.getElementById("leaveSelect");
+      leaveSel.innerHTML = "";
+      const leaveCandidates = players
+        .filter(p => isAvailableAtRound(p.name, roundNumber, schedule))
+        .map(p => p.name);
+
+      if (leaveCandidates.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "（途中抜け候補なし）";
+        leaveSel.appendChild(opt);
+      } else {
+        leaveCandidates.forEach(name => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          leaveSel.appendChild(opt);
+        });
+      }
+    }
+
+    function applyJoin() {
+      const name = document.getElementById("joinSelect").value;
+      if (!name) return;
+
+      schedule = getSchedule() || schedule || {};
+      if (isAvailableAtRound(name, roundNumber, schedule)) {
+        alert("もう参加中だよ💖");
+        return;
+      }
+
+      // scheduleに参加区間を追加（次の試合から）
+      if (!schedule[name]) schedule[name] = [];
+      schedule[name].push({ from: roundNumber, to: 9999 });
+      saveSchedule(schedule);
+
+      // playersにいる？
+      let p = players.find(x => x.name === name);
+      if (!p) {
+        const idx = players.length;
+        p = {
+          name, idx,
+          games:0, refs:0, rests:0,
+          partnersCount:{}, opponentsCount:{},
+          lastPairedRound:{}, lastOppRound:{},
+          lastRoundPlayed: roundNumber - 1,
+          lastRefRound: 0,
+          lastRestRound: roundNumber - 1,
+
+          // 追いつき禁止の基準点
+          joinRound: roundNumber,
+          gamesAtJoin: 0,
+          refsAtJoin: 0,
+          restsAtJoin: 0
+        };
+        players.push(p);
+      } else {
+        // 復帰：追いつかないように基準点を今に更新
+        p.joinRound = roundNumber;
+        p.gamesAtJoin = p.games || 0;
+        p.refsAtJoin = p.refs || 0;
+        p.restsAtJoin = p.rests || 0;
+      }
+
+      // activePlayersにも追加（整合用）
+      const active = getActivePlayers();
+      if (!active.includes(name)) {
+        active.push(name);
+        setActivePlayers(active);
+      }
+
+      saveState();
+      repopulateSelects();
+      renderPlayerTable();
+      alert(`途中参加/復帰OK💖（${roundNumber}試合目から）`);
+    }
+
+    function applyLeave() {
+      const name = document.getElementById("leaveSelect").value;
+      if (!name) return;
+
+      schedule = getSchedule() || schedule || {};
+      if (!isAvailableAtRound(name, roundNumber, schedule)) {
+        alert("その人は今もう参加してないよ🥺");
+        return;
+      }
+
+      if (!schedule[name]) schedule[name] = [{ from: 1, to: 9999 }];
+
+      // 現在ラウンドを含む区間を切る（次の試合から不参加）
+      const segs = schedule[name];
+      for (const seg of segs) {
+        if (seg.from <= roundNumber && roundNumber <= seg.to) {
+          seg.to = roundNumber - 1;
+          break;
+        }
+      }
+      saveSchedule(schedule);
+
+      // activePlayersからも外す（任意だけど整合が楽）
+      const active = getActivePlayers().filter(n => n !== name);
+      setActivePlayers(active);
+
+      saveState();
+      repopulateSelects();
+      alert(`途中抜けOK🥺（${roundNumber}試合目から不参加）`);
+    }
+  </script>
+</body>
+</html>

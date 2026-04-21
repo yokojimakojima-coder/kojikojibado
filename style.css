@@ -205,3 +205,115 @@ button, a, .top-nav a{
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
+/* =========================
+   入力欄・ボタン縦並び
+========================= */
+.vertical-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.full-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 46px;
+  border: 2px solid #f5a3c7;
+  border-radius: 12px;
+  padding: 0 14px;
+  font-size: 16px;
+  background: #fff7fb;
+}
+
+.main-btn,
+.danger-btn {
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  height: 46px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.main-btn {
+  background: #f58ac1;
+  color: #fff;
+}
+
+.danger-btn {
+  background: #ff6b81;
+  color: #fff;
+}
+
+/* =========================
+   名簿一覧
+========================= */
+.player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid #f6b3d1;
+  border-radius: 14px;
+  background: #fff7fb;
+}
+
+.player-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.delete-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: #ff7f9f;
+  color: #fff;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+/* =========================
+   参加チェック一覧
+========================= */
+.attendance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.attendance-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #f6b3d1;
+  border-radius: 14px;
+  background: #fff7fb;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.attendance-row input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}
+
+.empty-message {
+  padding: 16px;
+  text-align: center;
+  color: #888;
+  background: #fff7fb;
+  border: 1px dashed #f6b3d1;
+  border-radius: 14px;
+}

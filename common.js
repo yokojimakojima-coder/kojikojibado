@@ -1,270 +1,226 @@
-console.log("🔥 common.js 統合最新版（審判ゼロ潰し/ベンチ審判優先/ペア被り激減/復帰OK）");
+console.log("🔥 common.js 統合最新版v3（試合数6/7寄せ + 直近クールダウン + 審判ゼロ潰し）");
 
-/* ======================================================
-   localStorage 共通
-====================================================== */
+/* =========================
+   localStorage
+========================= */
+function getAllPlayers(){ return JSON.parse(localStorage.getItem("allPlayers")||"[]"); }
+function setAllPlayers(list){ localStorage.setItem("allPlayers", JSON.stringify(list||[])); }
+function getActivePlayers(){ return JSON.parse(localStorage.getItem("activePlayers")||"[]"); }
+function setActivePlayers(list){ localStorage.setItem("activePlayers", JSON.stringify(list||[])); }
+function getSchedule(){ return JSON.parse(localStorage.getItem("scheduleData")||"{}"); }
+function saveSchedule(s){ localStorage.setItem("scheduleData", JSON.stringify(s||{})); }
 
-function getAllPlayers() {
-  return JSON.parse(localStorage.getItem("allPlayers") || "[]");
-}
-
-function setAllPlayers(list) {
-  localStorage.setItem("allPlayers", JSON.stringify(list || []));
-}
-
-function getActivePlayers() {
-  return JSON.parse(localStorage.getItem("activePlayers") || "[]");
-}
-
-function setActivePlayers(list) {
-  localStorage.setItem("activePlayers", JSON.stringify(list || []));
-}
-
-function getSchedule() {
-  return JSON.parse(localStorage.getItem("scheduleData") || "{}");
-}
-
-function saveSchedule(s) {
-  localStorage.setItem("scheduleData", JSON.stringify(s || {}));
-}
-
-/* ======================================================
-   schedule 判定
-   schedule[name] = [{from,to}, ...]
-====================================================== */
-
-function isAvailableAtRound(name, roundNumber, schedule) {
+/* =========================
+   schedule判定
+========================= */
+function isAvailableAtRound(name, roundNumber, schedule){
   const sch = schedule || getSchedule();
   const segs = sch[name] || [];
   return segs.some(seg => seg.from <= roundNumber && roundNumber <= seg.to);
 }
-
-function getAvailablePlayerIndexes(players, roundNumber, schedule) {
+function getAvailablePlayerIndexes(players, roundNumber, schedule){
   const sch = schedule || getSchedule();
   const arr = [];
-  players.forEach((p, i) => {
+  players.forEach((p,i)=>{
     const segs = sch[p.name] || [];
-    if (segs.some(seg => seg.from <= roundNumber && roundNumber <= seg.to)) arr.push(i);
+    if(segs.some(seg=>seg.from<=roundNumber && roundNumber<=seg.to)) arr.push(i);
   });
   return arr;
 }
 
-/* ======================================================
-   players 初期化（追い上げ禁止の基準点つき）
-====================================================== */
+/* =========================
+   初期化（追いつき禁止＋履歴カウント＋直近記録）
+========================= */
+function normalizePlayers(names){
+  return (names||[]).map((name, idx)=>({
+    name, idx,
+    games:0, refs:0, rests:0,
+    partnersCount:{}, opponentsCount:{},
+    lastRoundPlayed:0, lastRefRound:0, lastRestRound:0,
 
-function normalizePlayers(names) {
-  return (names || []).map((name, idx) => ({
-    name,
-    idx,
+    // 直近ペア/直近対戦（相手idx→最後のラウンド）
+    lastPairedRound:{},
+    lastOppRound:{},
 
-    // カウント
-    games: 0,
-    refs: 0,
-    rests: 0,
-
-    // 履歴（回数で持つ＝同じペア/対戦が増えるほど避ける）
-    partnersCount: {},   // { otherIdx: count }
-    opponentsCount: {},  // { otherIdx: count }
-
-    // 直近
-    lastRoundPlayed: 0,
-    lastRefRound: 0,
-    lastRestRound: 0,
-
-    // ★追いつき防止（途中参加・復帰時に基準点を更新）
-    joinRound: 1,
-    gamesAtJoin: 0,
-    refsAtJoin: 0,
-    restsAtJoin: 0,
+    // 追いつき禁止（途中参加/復帰で更新）
+    joinRound:1,
+    gamesAtJoin:0, refsAtJoin:0, restsAtJoin:0,
   }));
 }
 
-/* ======================================================
-   重み（最強公平固定）
-   ※ 今回は審判/休憩の偏りが強かったので、審判側を強めてる
-====================================================== */
-
-function getAiWeights() {
+/* =========================
+   重み（強め）
+========================= */
+function getAiWeights(){
   return {
-    // 被り回避（回数×罰）
-    partnerBias: 30,
-    opponentBias: 18,
+    // 回数罰（長期の被り）
+    partnerBias: 40,
+    opponentBias: 24,
+
+    // 直近クールダウン罰（体感偏り潰し）
+    recentPartnerBias: 240,
+    recentOpponentBias: 140,
+    recentWindow: 6, // 直近6試合以内は強く避ける
 
     // 連続抑制
-    consecutivePlayPenalty: 35, // 連戦を強烈に避ける
-    breakRestBonus: 24,         // ★休み続き救済を強化（14→24）
+    consecutivePlayPenalty: 60,
+    breakRestBonus: 40,          // 休み続き救済（連休防止）
+    consecutiveRefPenalty: 9999, // 連続審判ほぼ禁止
 
-    // 追いつき禁止（参加期間で割った率を均す）
-    rateBias: 22,
-    refRateBias: 10,
-    restRateBias: 10,
+    // 追いつき禁止：率を均す
+    rateBias: 20,
+    refRateBias: 14,
+    restRateBias: 14,
+
+    // 審判ゼロ潰し
+    refCountHardBias: 140,
 
     // 同点割り
     noise: 0.01
   };
 }
 
-/* ======================================================
-   追い上げ禁止の “率” 計算（参加期間だけで割る）
-====================================================== */
-
-function _span(p, currentRound) {
+/* =========================
+   率計算（参加期間で割る）
+========================= */
+function _span(p, round){
   const jr = p.joinRound || 1;
-  return Math.max(1, currentRound - jr + 1);
+  return Math.max(1, round - jr + 1);
 }
-
-function participationRate(p, currentRound) {
-  const span = _span(p, currentRound);
-  const g = (p.games || 0) - (p.gamesAtJoin || 0);
+function participationRate(p, round){
+  const span = _span(p, round);
+  const g = (p.games||0) - (p.gamesAtJoin||0);
   return g / span;
 }
-
-function refRate(p, currentRound) {
-  const span = _span(p, currentRound);
-  const r = (p.refs || 0) - (p.refsAtJoin || 0);
+function refRate(p, round){
+  const span = _span(p, round);
+  const r = (p.refs||0) - (p.refsAtJoin||0);
   return r / span;
 }
-
-function restRate(p, currentRound) {
-  const span = _span(p, currentRound);
-  const b = (p.rests || 0) - (p.restsAtJoin || 0);
+function restRate(p, round){
+  const span = _span(p, round);
+  const b = (p.rests||0) - (p.restsAtJoin||0);
   return b / span;
 }
 
-/* ======================================================
-   回数mapユーティリティ
-====================================================== */
+/* =========================
+   回数map
+========================= */
+function _getCount(map, key){ return map && map[key] ? map[key] : 0; }
+function _incCount(map, key, n=1){ map[key] = (map[key]||0) + n; }
+function _setLast(map, key, round){ map[key] = round; }
 
-function _getCount(map, key) {
-  return map && map[key] ? map[key] : 0;
-}
+/* =========================
+   履歴更新（回数 + 直近）
+========================= */
+function updateHistory(players, teamA, teamB, round){
+  const [a1,a2]=teamA, [b1,b2]=teamB;
 
-function _incCount(map, key, n = 1) {
-  map[key] = (map[key] || 0) + n;
-}
-
-/* ======================================================
-   履歴更新（回数で増やす）
-====================================================== */
-
-function updateHistory(players, teamA, teamB) {
-  const [a1, a2] = teamA;
-  const [b1, b2] = teamB;
-
-  // ペア（両方向）
+  // ペア回数
   _incCount(players[a1].partnersCount, a2);
   _incCount(players[a2].partnersCount, a1);
   _incCount(players[b1].partnersCount, b2);
   _incCount(players[b2].partnersCount, b1);
 
-  // 対戦（4通り・両方向）
-  const opp = [
-    [a1, b1], [a1, b2],
-    [a2, b1], [a2, b2],
-  ];
-  opp.forEach(([x, y]) => {
+  // 直近ペア
+  _setLast(players[a1].lastPairedRound, a2, round);
+  _setLast(players[a2].lastPairedRound, a1, round);
+  _setLast(players[b1].lastPairedRound, b2, round);
+  _setLast(players[b2].lastPairedRound, b1, round);
+
+  // 対戦回数 + 直近対戦
+  const opp = [[a1,b1],[a1,b2],[a2,b1],[a2,b2]];
+  opp.forEach(([x,y])=>{
     _incCount(players[x].opponentsCount, y);
     _incCount(players[y].opponentsCount, x);
+    _setLast(players[x].lastOppRound, y, round);
+    _setLast(players[y].lastOppRound, x, round);
   });
 }
 
-/* ======================================================
-   4人→2vs2の3通りを試して一番マシな分け方を採用
-====================================================== */
-
-function scoreTeamsCount(players, teamA, teamB, w) {
-  const [a1, a2] = teamA;
-  const [b1, b2] = teamB;
+/* =========================
+   2vs2の3通りから最良を選ぶ
+========================= */
+function scoreTeams(players, teamA, teamB, round, w){
+  const [a1,a2]=teamA, [b1,b2]=teamB;
   let s = 0;
 
-  // ペア回数（多いほど重く罰）
+  // ペア回数罰
   s -= _getCount(players[a1].partnersCount, a2) * w.partnerBias;
   s -= _getCount(players[b1].partnersCount, b2) * w.partnerBias;
 
-  // 対戦回数（多いほど罰）
-  const opp = [
-    [a1, b1], [a1, b2],
-    [a2, b1], [a2, b2],
-  ];
-  opp.forEach(([x, y]) => {
+  // 直近ペア罰（K試合以内）
+  const lpA = players[a1].lastPairedRound[a2] || 0;
+  const lpB = players[b1].lastPairedRound[b2] || 0;
+  if (lpA && (round - lpA) <= w.recentWindow) s -= w.recentPartnerBias;
+  if (lpB && (round - lpB) <= w.recentWindow) s -= w.recentPartnerBias;
+
+  // 対戦回数罰＋直近対戦罰
+  const opp = [[a1,b1],[a1,b2],[a2,b1],[a2,b2]];
+  opp.forEach(([x,y])=>{
     s -= _getCount(players[x].opponentsCount, y) * w.opponentBias;
+
+    const lo = players[x].lastOppRound[y] || 0;
+    if (lo && (round - lo) <= w.recentWindow) s -= w.recentOpponentBias;
   });
 
   return s;
 }
 
-function chooseBestTeams(group4, players, w) {
-  const [p0, p1, p2, p3] = group4;
-
-  const candidates = [
-    { teamA: [p0, p1], teamB: [p2, p3] },
-    { teamA: [p0, p2], teamB: [p1, p3] },
-    { teamA: [p0, p3], teamB: [p1, p2] },
+function chooseBestTeams(group4, players, round, w){
+  const [p0,p1,p2,p3] = group4;
+  const cands = [
+    {teamA:[p0,p1], teamB:[p2,p3]},
+    {teamA:[p0,p2], teamB:[p1,p3]},
+    {teamA:[p0,p3], teamB:[p1,p2]},
   ];
 
-  let best = candidates[0];
-  let bestScore = -Infinity;
-
-  candidates.forEach(c => {
-    const s = scoreTeamsCount(players, c.teamA, c.teamB, w);
-    if (s > bestScore) {
-      bestScore = s;
-      best = c;
-    }
+  let best = cands[0], bestScore = -Infinity;
+  cands.forEach(c=>{
+    const s = scoreTeams(players, c.teamA, c.teamB, round, w);
+    if(s > bestScore){ bestScore=s; best=c; }
   });
-
   return best;
 }
 
-/* ======================================================
-   平均率計算（参加期間内の率）
-====================================================== */
-
-function computeAvgRates(players, activeIdx, round) {
-  if (!activeIdx || activeIdx.length === 0) {
-    return { avgGame: 0, avgRef: 0, avgRest: 0 };
-  }
-
-  let sumG = 0, sumR = 0, sumB = 0;
-  activeIdx.forEach(i => {
+/* =========================
+   平均率
+========================= */
+function computeAvgRates(players, activeIdx, round){
+  let sumG=0,sumR=0,sumB=0;
+  activeIdx.forEach(i=>{
     sumG += participationRate(players[i], round);
     sumR += refRate(players[i], round);
     sumB += restRate(players[i], round);
   });
-
-  return {
-    avgGame: sumG / activeIdx.length,
-    avgRef: sumR / activeIdx.length,
-    avgRest: sumB / activeIdx.length
-  };
+  const n = activeIdx.length || 1;
+  return { avgGame: sumG/n, avgRef: sumR/n, avgRest: sumB/n };
 }
 
-/* ======================================================
-   4人セットの評価（偏り/連続/率 + チーム分け評価）
-====================================================== */
-
-function scoreGroup(players, group4, round, w, avg) {
+/* =========================
+   4人セット評価（偏り潰し）
+========================= */
+function scoreGroup(players, group4, round, w, avg){
   let score = 0;
 
-  // 連戦強烈回避 / 連休を救う
-  group4.forEach(i => {
+  // 連戦/連休
+  group4.forEach(i=>{
     const p = players[i];
-    if ((p.lastRoundPlayed || 0) === round - 1) score -= w.consecutivePlayPenalty;
-    if ((p.lastRestRound || 0) === round - 1) score += w.breakRestBonus;
+    if((p.lastRoundPlayed||0) === round-1) score -= w.consecutivePlayPenalty;
+    if((p.lastRestRound||0) === round-1) score += w.breakRestBonus;
   });
 
-  // 追い上げ禁止：参加期間内の率を均す
-  group4.forEach(i => {
+  // 率の均し（追いつかない）
+  group4.forEach(i=>{
     const p = players[i];
     score -= Math.abs(participationRate(p, round) - avg.avgGame) * w.rateBias;
     score -= Math.abs(refRate(p, round) - avg.avgRef) * w.refRateBias;
     score -= Math.abs(restRate(p, round) - avg.avgRest) * w.restRateBias;
   });
 
-  // チーム分けのベスト（回数ペナルティ）
-  const bestTeams = chooseBestTeams(group4, players, w);
-  score += scoreTeamsCount(players, bestTeams.teamA, bestTeams.teamB, w);
+  // チーム分け（回数＋直近）
+  const bestTeams = chooseBestTeams(group4, players, round, w);
+  score += scoreTeams(players, bestTeams.teamA, bestTeams.teamB, round, w);
 
   // 同点割り
   score += Math.random() * w.noise;
@@ -272,90 +228,90 @@ function scoreGroup(players, group4, round, w, avg) {
   return { score, bestTeams };
 }
 
-/* ======================================================
-   審判選択（ゼロ潰し + 連続禁止 + 率均し）
-   ★ refPoolIdx は「ベンチ優先」で渡される
-====================================================== */
-
-function chooseReferee(refPoolIdx, players, round, w, avg) {
-  if (!refPoolIdx || refPoolIdx.length === 0) return null;
+/* =========================
+   審判選び（ベンチ優先＋ゼロ潰し＋連続禁止）
+========================= */
+function chooseReferee(refPoolIdx, players, round, w, avg){
+  if(!refPoolIdx || refPoolIdx.length===0) return null;
 
   let best = refPoolIdx[0];
   let bestScore = Infinity;
 
-  refPoolIdx.forEach(i => {
+  refPoolIdx.forEach(i=>{
     const p = players[i];
 
-    // 連続審判は絶対避ける
-    const consecutivePenalty = ((p.lastRefRound || 0) === round - 1) ? 9999 : 0;
+    const consecutive = ((p.lastRefRound||0) === round-1) ? w.consecutiveRefPenalty : 0;
 
-    // 審判ゼロ（or少ない）を強く優先
-    const refCountPenalty = (p.refs || 0) * 120;
+    // ゼロ潰し（refsが少ないほど優先）
+    const refCountPenalty = (p.refs||0) * w.refCountHardBias;
 
     // 審判率の平均との差
     const ratePenalty = Math.abs(refRate(p, round) - avg.avgRef) * (w.refRateBias * 30);
 
-    const s = consecutivePenalty + refCountPenalty + ratePenalty;
-
-    if (s < bestScore) {
-      bestScore = s;
-      best = i;
-    }
+    const s = consecutive + refCountPenalty + ratePenalty;
+    if(s < bestScore){ bestScore=s; best=i; }
   });
 
   return best;
 }
 
-/* ======================================================
+/* =========================
    ラウンド生成（メイン）
-   返り値: { rounds, refs, benches }
-====================================================== */
-
-function generateRound(players, roundNumber, courtCount, weights, schedule) {
+   ★試合数均等ガード入り（minGames+1まで）
+========================= */
+function generateRound(players, roundNumber, courtCount, weights, schedule){
   const w = weights || getAiWeights();
 
-  // ガード（必要プロパティ保証）
-  players.forEach(p => {
-    if (!p.partnersCount) p.partnersCount = {};
-    if (!p.opponentsCount) p.opponentsCount = {};
-    if (p.joinRound == null) p.joinRound = 1;
-    if (p.gamesAtJoin == null) p.gamesAtJoin = 0;
-    if (p.refsAtJoin == null) p.refsAtJoin = 0;
-    if (p.restsAtJoin == null) p.restsAtJoin = 0;
+  // ガード
+  players.forEach(p=>{
+    if(!p.partnersCount) p.partnersCount = {};
+    if(!p.opponentsCount) p.opponentsCount = {};
+    if(!p.lastPairedRound) p.lastPairedRound = {};
+    if(!p.lastOppRound) p.lastOppRound = {};
+    if(p.joinRound == null) p.joinRound = 1;
+    if(p.gamesAtJoin == null) p.gamesAtJoin = 0;
+    if(p.refsAtJoin == null) p.refsAtJoin = 0;
+    if(p.restsAtJoin == null) p.restsAtJoin = 0;
   });
 
   const activeIdx = getAvailablePlayerIndexes(players, roundNumber, schedule);
-  if (activeIdx.length < 4) return null;
+  if(activeIdx.length < 4) return null;
 
-  // 作れる最大コート数（4人/コート）
+  // 1ラウンドで作れる最大コート数
   const maxCourts = Math.floor(activeIdx.length / 4);
   const courts = Math.max(1, Math.min(courtCount, maxCourts));
 
   const avg = computeAvgRates(players, activeIdx, roundNumber);
 
+  // === 試合数の上限ガード（均等化の強制） ===
+  // その時点で一番少ない試合数 + 1 までしか試合に出れないようにする
+  const minGames = Math.min(...activeIdx.map(i => players[i].games));
+  const allowedToPlay = new Set(
+    activeIdx.filter(i => players[i].games <= minGames + 1)
+  );
+
   const rounds = [];
   const refs = [];
   const benches = [];
-
   const usedForPlay = new Set();
   const usedForRef = new Set();
 
   // ---- コートごとに「4人」を決める ----
-  for (let ct = 0; ct < courts; ct++) {
+  for(let ct=0; ct<courts; ct++){
     let best = null;
     let bestScore = -Infinity;
 
-    const pool = activeIdx.filter(i => !usedForPlay.has(i));
-    if (pool.length < 4) break;
+    // ★試合に出れる人だけ（allowedToPlay）から選ぶ
+    const pool = activeIdx.filter(i => !usedForPlay.has(i) && allowedToPlay.has(i));
+    if(pool.length < 4) break;
 
-    for (let a = 0; a < pool.length; a++) {
-      for (let b = a + 1; b < pool.length; b++) {
-        for (let c = b + 1; c < pool.length; c++) {
-          for (let d = c + 1; d < pool.length; d++) {
+    for(let a=0; a<pool.length; a++){
+      for(let b=a+1; b<pool.length; b++){
+        for(let c=b+1; c<pool.length; c++){
+          for(let d=c+1; d<pool.length; d++){
             const group4 = [pool[a], pool[b], pool[c], pool[d]];
-
             const judged = scoreGroup(players, group4, roundNumber, w, avg);
-            if (judged.score > bestScore) {
+            if(judged.score > bestScore){
               bestScore = judged.score;
               best = { group4, bestTeams: judged.bestTeams };
             }
@@ -364,29 +320,31 @@ function generateRound(players, roundNumber, courtCount, weights, schedule) {
       }
     }
 
-    if (!best) break;
+    if(!best) break;
 
     best.group4.forEach(i => usedForPlay.add(i));
     rounds.push({ teamA: best.bestTeams.teamA, teamB: best.bestTeams.teamB });
   }
 
-  if (rounds.length === 0) return null;
+  if(rounds.length === 0) return null;
 
-  // ---- 審判選定（ベンチ優先 + ゼロ潰し） ----
-  for (let i = 0; i < rounds.length; i++) {
+  // ---- 審判（ベンチ優先） ----
+  for(let i=0; i<rounds.length; i++){
     const playingSet = new Set([...rounds[i].teamA, ...rounds[i].teamB]);
 
-    // ✅ 審判はまず「ベンチ（このラウンド試合に出ない人）」から選ぶ
-    let pool = activeIdx.filter(idx => !usedForPlay.has(idx) && !usedForRef.has(idx) && !playingSet.has(idx));
+    // まずベンチ（このラウンド試合に出ない人）から
+    let pool = activeIdx.filter(idx =>
+      !usedForPlay.has(idx) && !usedForRef.has(idx) && !playingSet.has(idx)
+    );
 
-    // ベンチがいない等の非常時だけ、制約を緩める（でも同一コートの4人は避ける）
-    if (pool.length === 0) {
+    // ベンチがいない等の非常時は緩める（でも同一コート4人は避ける）
+    if(pool.length === 0){
       pool = activeIdx.filter(idx => !usedForRef.has(idx) && !playingSet.has(idx));
     }
 
-    // それでも無理なら兼任（そのコートの4人から）
+    // それでも無理なら兼任（そのコートの4人）
     let ref = chooseReferee(pool, players, roundNumber, w, avg);
-    if (ref === null) {
+    if(ref === null){
       const four = [...playingSet];
       ref = chooseReferee(four, players, roundNumber, w, avg);
     }
@@ -397,37 +355,33 @@ function generateRound(players, roundNumber, courtCount, weights, schedule) {
 
   // ---- benches（試合にも審判にも入ってない人） ----
   const played = new Set();
-  rounds.forEach(r => {
-    r.teamA.forEach(i => played.add(i));
-    r.teamB.forEach(i => played.add(i));
+  rounds.forEach(r=>{
+    r.teamA.forEach(i=>played.add(i));
+    r.teamB.forEach(i=>played.add(i));
   });
 
-  activeIdx.forEach(i => {
+  activeIdx.forEach(i=>{
     const isPlayed = played.has(i);
     const isRef = usedForRef.has(i);
-    if (!isPlayed && !isRef) benches.push(i);
+    if(!isPlayed && !isRef) benches.push(i);
   });
 
-  // ---- カウント更新 ----
-
-  // 試合
-  rounds.forEach(r => {
+  // ---- カウント更新（ここが次の公平性に効く） ----
+  rounds.forEach(r=>{
     const four = [...r.teamA, ...r.teamB];
-    four.forEach(i => {
+    four.forEach(i=>{
       players[i].games++;
       players[i].lastRoundPlayed = roundNumber;
     });
-    updateHistory(players, r.teamA, r.teamB);
+    updateHistory(players, r.teamA, r.teamB, roundNumber);
   });
 
-  // 審判
-  refs.forEach(i => {
+  refs.forEach(i=>{
     players[i].refs++;
     players[i].lastRefRound = roundNumber;
   });
 
-  // 休憩
-  benches.forEach(i => {
+  benches.forEach(i=>{
     players[i].rests++;
     players[i].lastRestRound = roundNumber;
   });

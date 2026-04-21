@@ -4,93 +4,115 @@
   <meta charset="UTF-8">
   <title>コジバド!! - 名簿管理</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css?v=20260422_03">
+  <link rel="stylesheet" href="style.css?v=20260422_10">
 </head>
 <body>
+
   <h1 class="title">コジバド!!</h1>
 
   <div class="top-nav">
-    <a href="players.html" class="nav-link active">名簿管理</a>
-    <a href="attendance.html" class="nav-link">参加チェック</a>
-    <a href="index.html" class="nav-link">試合作成</a>
+    <a class="active" href="players.html">名簿管理</a>
+    <a href="attendance.html">参加チェック</a>
+    <a href="index.html">試合作成</a>
   </div>
 
   <div class="setting-block">
     <h2>名簿管理</h2>
-    <div class="row">
-      <input id="newName" class="input" placeholder="名前を入力（例：コジコジ）">
-      <button id="addBtn" class="small">追加</button>
+
+    <div class="vertical-form">
+      <input
+        type="text"
+        id="playerNameInput"
+        class="full-input"
+        placeholder="名前を入力"
+      >
+
+      <button id="addPlayerBtn" class="main-btn">追加</button>
+      <button id="clearPlayersBtn" class="danger-btn">名簿を全削除</button>
     </div>
 
-    <div class="row">
-      <button id="clearBtn" class="danger">名簿を全削除</button>
-    </div>
-
-    <ul id="list" class="name-list"></ul>
-    <p class="hint">※順番は今は固定。必要なら並び替えも追加できるよ💖</p>
+    <div id="playerList" class="player-list"></div>
   </div>
 
-  <script src="common.js?v=20260422_03"></script>
+  <script src="common.js?v=20260422_10"></script>
   <script>
-    function render() {
-      const list = document.getElementById("list");
+    function getPlayersSafe() {
+      return getAllPlayers ? getAllPlayers() : JSON.parse(localStorage.getItem("allPlayers") || "[]");
+    }
+
+    function savePlayersSafe(players) {
+      localStorage.setItem("allPlayers", JSON.stringify(players));
+    }
+
+    function renderPlayers() {
+      const list = document.getElementById("playerList");
+      const players = getPlayersSafe();
+
       list.innerHTML = "";
-      const all = getAllPlayers();
 
-      all.forEach((name, idx) => {
-        const li = document.createElement("li");
-        li.className = "name-item";
-        li.innerHTML = `
-          <span class="name">${escapeHtml(name)}</span>
-          <button class="mini danger" data-idx="${idx}">削除</button>
+      if (players.length === 0) {
+        list.innerHTML = `<div class="empty-message">まだ名簿がないよ</div>`;
+        return;
+      }
+
+      players.forEach((name, index) => {
+        const row = document.createElement("div");
+        row.className = "player-row";
+        row.innerHTML = `
+          <span class="player-name">${name}</span>
+          <button class="delete-btn" onclick="deletePlayer(${index})">削除</button>
         `;
-        list.appendChild(li);
-      });
-
-      list.querySelectorAll("button[data-idx]").forEach(btn => {
-        btn.addEventListener("click", () => {
-          const i = Number(btn.dataset.idx);
-          const all2 = getAllPlayers();
-          all2.splice(i, 1);
-          setAllPlayers(all2);
-
-          // activePlayersからも消す
-          const active = getActivePlayers().filter(n => n !== btn.parentElement.querySelector(".name").textContent);
-          setActivePlayers(active);
-
-          render();
-        });
+        list.appendChild(row);
       });
     }
 
-    function escapeHtml(s){
-      return String(s).replace(/[&<>"']/g, m => ({
-        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-      }[m]));
-    }
-
-    document.getElementById("addBtn").addEventListener("click", () => {
-      const input = document.getElementById("newName");
+    function addPlayer() {
+      const input = document.getElementById("playerNameInput");
       const name = input.value.trim();
       if (!name) return;
 
-      const all = getAllPlayers();
-      all.push(name);
-      setAllPlayers(all);
+      const players = getPlayersSafe();
+
+      if (players.includes(name)) {
+        alert("その名前はすでに登録済みだよ");
+        return;
+      }
+
+      players.push(name);
+      savePlayersSafe(players);
+
       input.value = "";
-      render();
+      renderPlayers();
+    }
+
+    function deletePlayer(index) {
+      const players = getPlayersSafe();
+      players.splice(index, 1);
+      savePlayersSafe(players);
+
+      const activePlayers = JSON.parse(localStorage.getItem("activePlayers") || "[]")
+        .filter(name => players.includes(name));
+      localStorage.setItem("activePlayers", JSON.stringify(activePlayers));
+
+      renderPlayers();
+    }
+
+    function clearPlayers() {
+      if (!confirm("名簿を全部削除する？")) return;
+
+      localStorage.setItem("allPlayers", JSON.stringify([]));
+      localStorage.setItem("activePlayers", JSON.stringify([]));
+      renderPlayers();
+    }
+
+    document.getElementById("addPlayerBtn").addEventListener("click", addPlayer);
+    document.getElementById("clearPlayersBtn").addEventListener("click", clearPlayers);
+
+    document.getElementById("playerNameInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") addPlayer();
     });
 
-    document.getElementById("clearBtn").addEventListener("click", () => {
-      if (!confirm("名簿を全削除する？")) return;
-      setAllPlayers([]);
-      setActivePlayers([]);
-      localStorage.removeItem("scheduleData");
-      localStorage.removeItem("kojibado_state_v5");
-      render();
-    });
-
-    render();
+    renderPlayers();
   </script>
 </body>
 </html>

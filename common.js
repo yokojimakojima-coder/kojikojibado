@@ -1,4 +1,4 @@
-console.log("🔥 common.js 統合最終版（復帰OK/追いつかない/ペア被り激減）読み込まれたよ！");
+console.log("🔥 common.js 統合最新版（審判ゼロ潰し/ベンチ審判優先/ペア被り激減/復帰OK）");
 
 /* ======================================================
    localStorage 共通
@@ -51,7 +51,6 @@ function getAvailablePlayerIndexes(players, roundNumber, schedule) {
 
 /* ======================================================
    players 初期化（追い上げ禁止の基準点つき）
-   ※ index.htmlは必ずこれを使う！
 ====================================================== */
 
 function normalizePlayers(names) {
@@ -83,6 +82,7 @@ function normalizePlayers(names) {
 
 /* ======================================================
    重み（最強公平固定）
+   ※ 今回は審判/休憩の偏りが強かったので、審判側を強めてる
 ====================================================== */
 
 function getAiWeights() {
@@ -93,12 +93,12 @@ function getAiWeights() {
 
     // 連続抑制
     consecutivePlayPenalty: 35, // 連戦を強烈に避ける
-    breakRestBonus: 14,         // 前回休みなら出しやすくする（連休防止）
+    breakRestBonus: 24,         // ★休み続き救済を強化（14→24）
 
-    // 追いつき禁止：参加期間で割った “率” を均す（総数で追わない）
-    rateBias: 22,               // 出場率
-    refRateBias: 10,            // 審判率
-    restRateBias: 10,           // 休憩率
+    // 追いつき禁止（参加期間で割った率を均す）
+    rateBias: 22,
+    refRateBias: 10,
+    restRateBias: 10,
 
     // 同点割り
     noise: 0.01
@@ -171,7 +171,6 @@ function updateHistory(players, teamA, teamB) {
 
 /* ======================================================
    4人→2vs2の3通りを試して一番マシな分け方を採用
-   （同じペアが“続く”のを激減させる本体）
 ====================================================== */
 
 function scoreTeamsCount(players, teamA, teamB, w) {
@@ -219,7 +218,7 @@ function chooseBestTeams(group4, players, w) {
 }
 
 /* ======================================================
-   4人セットの評価（ここで偏り/連続/率を潰す）
+   平均率計算（参加期間内の率）
 ====================================================== */
 
 function computeAvgRates(players, activeIdx, round) {
@@ -241,17 +240,21 @@ function computeAvgRates(players, activeIdx, round) {
   };
 }
 
+/* ======================================================
+   4人セットの評価（偏り/連続/率 + チーム分け評価）
+====================================================== */
+
 function scoreGroup(players, group4, round, w, avg) {
   let score = 0;
 
-  // 連戦強烈回避 / 連休を救う（前回休みなら加点）
+  // 連戦強烈回避 / 連休を救う
   group4.forEach(i => {
     const p = players[i];
     if ((p.lastRoundPlayed || 0) === round - 1) score -= w.consecutivePlayPenalty;
     if ((p.lastRestRound || 0) === round - 1) score += w.breakRestBonus;
   });
 
-  // 追い上げ禁止：参加期間内の“率”の平均との差を嫌う
+  // 追い上げ禁止：参加期間内の率を均す
   group4.forEach(i => {
     const p = players[i];
     score -= Math.abs(participationRate(p, round) - avg.avgGame) * w.rateBias;
@@ -259,7 +262,7 @@ function scoreGroup(players, group4, round, w, avg) {
     score -= Math.abs(restRate(p, round) - avg.avgRest) * w.restRateBias;
   });
 
-  // チーム分けのベストスコア（回数ペナルティ）
+  // チーム分けのベスト（回数ペナルティ）
   const bestTeams = chooseBestTeams(group4, players, w);
   score += scoreTeamsCount(players, bestTeams.teamA, bestTeams.teamB, w);
 
@@ -270,9 +273,8 @@ function scoreGroup(players, group4, round, w, avg) {
 }
 
 /* ======================================================
-   審判選択（基本：その試合の4人以外から）
-   - 可能なら “ベンチ（試合に出ない人）” から
-   - いない場合のみ兼任（やむなし）
+   審判選択（ゼロ潰し + 連続禁止 + 率均し）
+   ★ refPoolIdx は「ベンチ優先」で渡される
 ====================================================== */
 
 function chooseReferee(refPoolIdx, players, round, w, avg) {
@@ -284,11 +286,16 @@ function chooseReferee(refPoolIdx, players, round, w, avg) {
   refPoolIdx.forEach(i => {
     const p = players[i];
 
-    // 審判率を平均に近づける（少ない人優先）
-    let s = Math.abs(refRate(p, round) - avg.avgRef) * w.refRateBias;
+    // 連続審判は絶対避ける
+    const consecutivePenalty = ((p.lastRefRound || 0) === round - 1) ? 9999 : 0;
 
-    // 連続審判は強烈に避ける
-    if ((p.lastRefRound || 0) === round - 1) s += 999;
+    // 審判ゼロ（or少ない）を強く優先
+    const refCountPenalty = (p.refs || 0) * 120;
+
+    // 審判率の平均との差
+    const ratePenalty = Math.abs(refRate(p, round) - avg.avgRef) * (w.refRateBias * 30);
+
+    const s = consecutivePenalty + refCountPenalty + ratePenalty;
 
     if (s < bestScore) {
       bestScore = s;
@@ -301,16 +308,13 @@ function chooseReferee(refPoolIdx, players, round, w, avg) {
 
 /* ======================================================
    ラウンド生成（メイン）
-   引数:
-     players, roundNumber, courtCount, weights, schedule
-   返り値:
-     { rounds:[{teamA,teamB}], refs:[idx], benches:[idx] }
+   返り値: { rounds, refs, benches }
 ====================================================== */
 
 function generateRound(players, roundNumber, courtCount, weights, schedule) {
   const w = weights || getAiWeights();
 
-  // 初期ガード（必要プロパティ保証）
+  // ガード（必要プロパティ保証）
   players.forEach(p => {
     if (!p.partnersCount) p.partnersCount = {};
     if (!p.opponentsCount) p.opponentsCount = {};
@@ -323,7 +327,7 @@ function generateRound(players, roundNumber, courtCount, weights, schedule) {
   const activeIdx = getAvailablePlayerIndexes(players, roundNumber, schedule);
   if (activeIdx.length < 4) return null;
 
-  // 1ラウンドで作れる最大コート数（4人/コート）
+  // 作れる最大コート数（4人/コート）
   const maxCourts = Math.floor(activeIdx.length / 4);
   const courts = Math.max(1, Math.min(courtCount, maxCourts));
 
@@ -362,36 +366,33 @@ function generateRound(players, roundNumber, courtCount, weights, schedule) {
 
     if (!best) break;
 
-    // 採用
     best.group4.forEach(i => usedForPlay.add(i));
     rounds.push({ teamA: best.bestTeams.teamA, teamB: best.bestTeams.teamB });
   }
 
   if (rounds.length === 0) return null;
 
-  // ---- 審判を選ぶ（各コートごと） ----
+  // ---- 審判選定（ベンチ優先 + ゼロ潰し） ----
   for (let i = 0; i < rounds.length; i++) {
     const playingSet = new Set([...rounds[i].teamA, ...rounds[i].teamB]);
 
-    // 優先：ベンチ（このラウンド試合に出ない参加者）
-    const benchPool = activeIdx.filter(idx => !usedForPlay.has(idx) && !usedForRef.has(idx) && !playingSet.has(idx));
+    // ✅ 審判はまず「ベンチ（このラウンド試合に出ない人）」から選ぶ
+    let pool = activeIdx.filter(idx => !usedForPlay.has(idx) && !usedForRef.has(idx) && !playingSet.has(idx));
 
-    // 次点：参加者全体から（ただしそのコートの4人は除外）
-    const anyPool = activeIdx.filter(idx => !usedForRef.has(idx) && !playingSet.has(idx));
-
-    const pool = benchPool.length > 0 ? benchPool : anyPool;
-
-    const ref = chooseReferee(pool, players, roundNumber, w, avg);
-
-    // 万が一誰もいなければ “兼任”（そのコートの4人から）
-    let finalRef = ref;
-    if (finalRef === null) {
-      const four = [...playingSet];
-      finalRef = chooseReferee(four, players, roundNumber, w, avg);
+    // ベンチがいない等の非常時だけ、制約を緩める（でも同一コートの4人は避ける）
+    if (pool.length === 0) {
+      pool = activeIdx.filter(idx => !usedForRef.has(idx) && !playingSet.has(idx));
     }
 
-    refs.push(finalRef);
-    usedForRef.add(finalRef);
+    // それでも無理なら兼任（そのコートの4人から）
+    let ref = chooseReferee(pool, players, roundNumber, w, avg);
+    if (ref === null) {
+      const four = [...playingSet];
+      ref = chooseReferee(four, players, roundNumber, w, avg);
+    }
+
+    refs.push(ref);
+    usedForRef.add(ref);
   }
 
   // ---- benches（試合にも審判にも入ってない人） ----
@@ -407,7 +408,7 @@ function generateRound(players, roundNumber, courtCount, weights, schedule) {
     if (!isPlayed && !isRef) benches.push(i);
   });
 
-  // ---- カウント更新（ここで次ラウンドの評価に効く） ----
+  // ---- カウント更新 ----
 
   // 試合
   rounds.forEach(r => {

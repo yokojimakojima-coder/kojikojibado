@@ -316,24 +316,16 @@ function generateRound(players, roundNumber, courtCount, weights, schedule){
 
   // ---- コートごとに「4人」を決める ----
   for(let ct=0; ct<courts; ct++){
-    let best = null;
-    let bestScore = -Infinity;
-
     // 試合候補（allowed内）から
     let pool = activeIdx.filter(i => !usedForPlay.has(i) && allowedToPlay.has(i));
 
-    // もし候補が少なくなってきたら、capをさらに緩和して復帰させる
-    // （これで絶対詰まない）
+    // 候補が少なければ cap をさらに緩和（詰み回避）
     while (pool.length < 4 && cap < minGames + 20) {
       cap++;
       allowedToPlay = buildAllowed(cap);
       pool = activeIdx.filter(i => !usedForPlay.has(i) && allowedToPlay.has(i));
     }
-
     if(pool.length < 4) break;
-
-    // まずは「minを入れる（可能なら）」モードで探索
-    let strictMin = (remainingMin.size > 0);
 
     const tryFindBest = (enforceMin) => {
       let localBest = null;
@@ -359,23 +351,22 @@ function generateRound(players, roundNumber, courtCount, weights, schedule){
           }
         }
       }
-      return { localBest, localBestScore };
+      return localBest;
     };
 
-    let found = tryFindBest(strictMin);
+    // まずは「minを入れる（可能なら）」で探索
+    let best = null;
+    if (remainingMin.size > 0) best = tryFindBest(true);
 
-    // strictMinで見つからない＝詰みそう → min強制を解除して続行
-    if (!found.localBest && strictMin) {
-      found = tryFindBest(false);
-    }
+    // strictで見つからない＝詰みそう → 解除して続行
+    if (!best) best = tryFindBest(false);
+    if(!best) break;
 
-    if(!found.localBest) break;
-
-    found.localBest.group4.forEach(i => usedForPlay.add(i));
-    rounds.push({ teamA: found.localBest.bestTeams.teamA, teamB: found.localBest.bestTeams.teamB });
+    best.group4.forEach(i => usedForPlay.add(i));
+    rounds.push({ teamA: best.bestTeams.teamA, teamB: best.bestTeams.teamB });
 
     // そのコートでminが入ったら remainingMin から削除
-    found.localBest.group4.forEach(i => {
+    best.group4.forEach(i => {
       if (remainingMin.has(i)) remainingMin.delete(i);
     });
   }

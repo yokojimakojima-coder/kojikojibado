@@ -1,4 +1,4 @@
-console.log("🔥 common.js 統合最新版v4（mustInclude+底上げ加点で試合数均等化強化）");
+console.log("🔥 common.js 統合最新版v5（詰まない均等化：自動緩和 + mustInclude + 底上げ加点 + 直近クールダウン）");
 
 /* =========================
    localStorage
@@ -49,7 +49,7 @@ function normalizePlayers(names){
 }
 
 /* =========================
-   重み（強め）
+   重み（強め・実用寄り）
 ========================= */
 function getAiWeights(){
   return {
@@ -152,7 +152,7 @@ function scoreTeams(players, teamA, teamB, round, w){
   s -= _getCount(players[a1].partnersCount, a2) * w.partnerBias;
   s -= _getCount(players[b1].partnersCount, b2) * w.partnerBias;
 
-  // 直近ペア罰（K試合以内）
+  // 直近ペア罰
   const lpA = players[a1].lastPairedRound[a2] || 0;
   const lpB = players[b1].lastPairedRound[b2] || 0;
   if (lpA && (round - lpA) <= w.recentWindow) s -= w.recentPartnerBias;
@@ -162,7 +162,6 @@ function scoreTeams(players, teamA, teamB, round, w){
   const opp = [[a1,b1],[a1,b2],[a2,b1],[a2,b2]];
   opp.forEach(([x,y])=>{
     s -= _getCount(players[x].opponentsCount, y) * w.opponentBias;
-
     const lo = players[x].lastOppRound[y] || 0;
     if (lo && (round - lo) <= w.recentWindow) s -= w.recentOpponentBias;
   });
@@ -202,7 +201,7 @@ function computeAvgRates(players, activeIdx, round){
 
 /* =========================
    4人セット評価（偏り潰し）
-   ★ minGames を渡して「底上げ加点」も適用
+   ★ minGames を渡して底上げ加点
 ========================= */
 function scoreGroup(players, group4, round, w, avg, minGames){
   let score = 0;
@@ -248,11 +247,9 @@ function chooseReferee(refPoolIdx, players, round, w, avg){
 
   refPoolIdx.forEach(i=>{
     const p = players[i];
-
     const consecutive = ((p.lastRefRound||0) === round-1) ? w.consecutiveRefPenalty : 0;
     const refCountPenalty = (p.refs||0) * w.refCountHardBias;
     const ratePenalty = Math.abs(refRate(p, round) - avg.avgRef) * (w.refRateBias * 30);
-
     const s = consecutive + refCountPenalty + ratePenalty;
     if(s < bestScore){ bestScore=s; best=i; }
   });
@@ -262,7 +259,9 @@ function chooseReferee(refPoolIdx, players, round, w, avg){
 
 /* =========================
    ラウンド生成（メイン）
-   ★試合数均等ガード（min+1）＋ mustInclude（minを必ず1人）
+   ★試合数均等ガード：min+1を基本
+   ★ただし詰むなら自動でmin+2, min+3...に緩和して必ず組める
+   ★mustInclude（最小試合数の人を入れる）は「可能なら」優先、詰むなら解除
 ========================= */
 function generateRound(players, roundNumber, courtCount, weights, schedule){
   const w = weights || getAiWeights();
@@ -288,12 +287,23 @@ function generateRound(players, roundNumber, courtCount, weights, schedule){
 
   const avg = computeAvgRates(players, activeIdx, roundNumber);
 
-  // 試合数の上限ガード（min+1）
   const minGames = Math.min(...activeIdx.map(i => players[i].games));
-  const allowedToPlay = new Set(activeIdx.filter(i => players[i].games <= minGames + 1));
+  const minPlayers = new Set(activeIdx.filter(i => players[i].games === minGames));
 
-  // ★最小試合数の人（置いてかれ防止）
-  const mustInclude = new Set(activeIdx.filter(i => players[i].games === minGames));
+  // 目標：min+1（これでダメなら自動緩和）
+  const needPlayersForPlay = 4 * courts;
+
+  function buildAllowed(cap){
+    return new Set(activeIdx.filter(i => players[i].games <= cap));
+  }
+
+  // capを自動で緩和して「最低 4*courts 人」確保
+  let cap = minGames + 1;
+  let allowedToPlay = buildAllowed(cap);
+  while (allowedToPlay.size < needPlayersForPlay && cap < minGames + 20) {
+    cap++;
+    allowedToPlay = buildAllowed(cap);
+  }
 
   const rounds = [];
   const refs = [];
@@ -301,38 +311,73 @@ function generateRound(players, roundNumber, courtCount, weights, schedule){
   const usedForPlay = new Set();
   const usedForRef = new Set();
 
+  // ★minPlayers を“できるだけ入れる”ための管理（複数コート対策）
+  let remainingMin = new Set([...minPlayers]);
+
   // ---- コートごとに「4人」を決める ----
   for(let ct=0; ct<courts; ct++){
     let best = null;
     let bestScore = -Infinity;
 
-    // 試合に出れる人だけ
-    const pool = activeIdx.filter(i => !usedForPlay.has(i) && allowedToPlay.has(i));
+    // 試合候補（allowed内）から
+    let pool = activeIdx.filter(i => !usedForPlay.has(i) && allowedToPlay.has(i));
+
+    // もし候補が少なくなってきたら、capをさらに緩和して復帰させる
+    // （これで絶対詰まない）
+    while (pool.length < 4 && cap < minGames + 20) {
+      cap++;
+      allowedToPlay = buildAllowed(cap);
+      pool = activeIdx.filter(i => !usedForPlay.has(i) && allowedToPlay.has(i));
+    }
+
     if(pool.length < 4) break;
 
-    for(let a=0; a<pool.length; a++){
-      for(let b=a+1; b<pool.length; b++){
-        for(let c=b+1; c<pool.length; c++){
-          for(let d=c+1; d<pool.length; d++){
-            const group4 = [pool[a], pool[b], pool[c], pool[d]];
+    // まずは「minを入れる（可能なら）」モードで探索
+    let strictMin = (remainingMin.size > 0);
 
-            // ★最小試合数の人を最低1人は含める（放置防止）
-            if (!group4.some(i => mustInclude.has(i))) continue;
+    const tryFindBest = (enforceMin) => {
+      let localBest = null;
+      let localBestScore = -Infinity;
 
-            const judged = scoreGroup(players, group4, roundNumber, w, avg, minGames);
-            if(judged.score > bestScore){
-              bestScore = judged.score;
-              best = { group4, bestTeams: judged.bestTeams };
+      for(let a=0; a<pool.length; a++){
+        for(let b=a+1; b<pool.length; b++){
+          for(let c=b+1; c<pool.length; c++){
+            for(let d=c+1; d<pool.length; d++){
+              const group4 = [pool[a], pool[b], pool[c], pool[d]];
+
+              // minを“可能なら”入れる（詰むなら後で解除）
+              if (enforceMin) {
+                if (!group4.some(i => remainingMin.has(i))) continue;
+              }
+
+              const judged = scoreGroup(players, group4, roundNumber, w, avg, minGames);
+              if(judged.score > localBestScore){
+                localBestScore = judged.score;
+                localBest = { group4, bestTeams: judged.bestTeams };
+              }
             }
           }
         }
       }
+      return { localBest, localBestScore };
+    };
+
+    let found = tryFindBest(strictMin);
+
+    // strictMinで見つからない＝詰みそう → min強制を解除して続行
+    if (!found.localBest && strictMin) {
+      found = tryFindBest(false);
     }
 
-    if(!best) break;
+    if(!found.localBest) break;
 
-    best.group4.forEach(i => usedForPlay.add(i));
-    rounds.push({ teamA: best.bestTeams.teamA, teamB: best.bestTeams.teamB });
+    found.localBest.group4.forEach(i => usedForPlay.add(i));
+    rounds.push({ teamA: found.localBest.bestTeams.teamA, teamB: found.localBest.bestTeams.teamB });
+
+    // そのコートでminが入ったら remainingMin から削除
+    found.localBest.group4.forEach(i => {
+      if (remainingMin.has(i)) remainingMin.delete(i);
+    });
   }
 
   if(rounds.length === 0) return null;

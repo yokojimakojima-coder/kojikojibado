@@ -22,7 +22,6 @@ html,body{ margin:0; padding:0; background:var(--bg); font-family:"Hiragino Maru
   animation: rainbow 6s linear infinite;
   text-shadow: 2px 2px #ffd6eb;
 }
-
 @keyframes rainbow{
   0%{ background-position:0% 50%; }
   50%{ background-position:100% 50%; }
@@ -66,7 +65,8 @@ html,body{ margin:0; padding:0; background:var(--bg); font-family:"Hiragino Maru
 }
 
 label{ display:block; font-weight:800; margin-top:8px; }
-select, .input{
+
+select{
   width:100%;
   padding:12px;
   border-radius:12px;
@@ -92,12 +92,6 @@ button{
 button:active{ transform: scale(.99); }
 button:hover{ background:var(--pink); }
 
-button.small{ padding:12px; font-size:16px; }
-button.mini{ padding:8px 10px; font-size:14px; width:auto; }
-
-button.danger{ background:#ff6675; }
-button.danger:hover{ background:#ff3b55; }
-
 .hint{
   margin:10px 0 0;
   color:#a85;
@@ -114,6 +108,10 @@ button.danger:hover{ background:#ff3b55; }
   .two-col{ grid-template-columns:1fr 1fr; }
 }
 
+.danger{ background:#ff6675 !important; }
+.danger:hover{ background:#ff3b55 !important; }
+
+/* --- match cards --- */
 .match-round{
   margin-top:12px;
   padding:12px;
@@ -152,7 +150,17 @@ button.danger:hover{ background:#ff3b55; }
   margin:6px 0;
   color:var(--pink);
 }
+.bench{
+  margin-top:10px;
+  padding:10px;
+  border-radius:12px;
+  border:1px dashed #ffb3d9;
+  background:#fff7fb;
+  font-weight:800;
+  color:#666;
+}
 
+/* --- status table --- */
 .status-table{
   width:100%;
   border-collapse:collapse;
@@ -171,9 +179,38 @@ button.danger:hover{ background:#ff3b55; }
   font-weight:800;
 }
 
-.row{ display:flex; gap:10px; align-items:center; }
-.row .input{ flex:1; }
-.row button.small{ flex:0 0 auto; }
+/* =========================
+   名簿・参加チェック UI
+========================= */
+.vertical-form{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-bottom:14px;
+}
+.full-input{
+  width:100%;
+  box-sizing:border-box;
+  height:46px;
+  border:2px solid #f5a3c7;
+  border-radius:12px;
+  padding:0 14px;
+  font-size:16px;
+  background:#fff7fb;
+}
+.main-btn{
+  background:#f58ac1;
+  color:#fff;
+}
+.danger-btn{
+  background:#ff6b81;
+  color:#fff;
+}
+.mini{
+  padding:8px 10px;
+  font-size:14px;
+  width:auto;
+}
 
 .name-list{ list-style:none; padding:0; margin:12px 0 0; }
 .name-item{
@@ -199,121 +236,82 @@ button.danger:hover{ background:#ff3b55; }
   padding:12px;
   font-weight:900;
 }
+.check-item input[type="checkbox"]{
+  width:20px;
+  height:20px;
+}
+.empty-message{
+  padding:16px;
+  text-align:center;
+  color:#888;
+  background:#fff7fb;
+  border:1px dashed #f6b3d1;
+  border-radius:14px;
+}
+
+/* =========================
+   タイマー（ギャル可愛く）
+========================= */
+.timer-controls{
+  display:grid;
+  grid-template-columns: 70px 1fr 1fr 1fr;
+  gap:10px;
+  align-items:center;
+}
+.timer-label{
+  font-weight:900;
+  color:#ff4fa8;
+}
+.timer-select{
+  width:100%;
+  padding:12px;
+  border-radius:12px;
+  border:2px solid #ffd3ec;
+  background:#fff;
+  font-size:16px;
+  font-weight:800;
+}
+.timer-btn{
+  width:100%;
+  padding:12px;
+  border-radius:12px;
+  border:none;
+  font-size:16px;
+  font-weight:900;
+  color:#fff;
+  cursor:pointer;
+  box-shadow: 0 6px 0 rgba(255, 102, 179, 0.25);
+}
+.timer-start{ background:#ff66b3; }
+.timer-stop{ background:#ff6675; }
+.timer-btn:disabled{
+  opacity:0.55;
+  cursor:not-allowed;
+  box-shadow:none;
+}
+.timer-display{
+  margin-top:12px;
+  text-align:center;
+  font-size:44px;
+  font-weight:1000;
+  color:#ff4fa8;
+  letter-spacing:1px;
+  text-shadow:2px 2px #ffd6eb;
+}
+.timer-status{
+  margin-top:6px;
+  text-align:center;
+  font-size:14px;
+  font-weight:800;
+  color:#ff66b3;
+}
+@media (max-width:520px){
+  .timer-controls{ grid-template-columns: 1fr; }
+  .timer-label{ display:none; }
+}
 
 /* --- Android タップ改善 --- */
 button, a, .top-nav a{
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
-}
-/* =========================
-   入力欄・ボタン縦並び
-========================= */
-.vertical-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.full-input {
-  width: 100%;
-  box-sizing: border-box;
-  height: 46px;
-  border: 2px solid #f5a3c7;
-  border-radius: 12px;
-  padding: 0 14px;
-  font-size: 16px;
-  background: #fff7fb;
-}
-
-.main-btn,
-.danger-btn {
-  width: 100%;
-  border: none;
-  border-radius: 12px;
-  height: 46px;
-  font-size: 15px;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-.main-btn {
-  background: #f58ac1;
-  color: #fff;
-}
-
-.danger-btn {
-  background: #ff6b81;
-  color: #fff;
-}
-
-/* =========================
-   名簿一覧
-========================= */
-.player-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.player-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 16px;
-  border: 1px solid #f6b3d1;
-  border-radius: 14px;
-  background: #fff7fb;
-}
-
-.player-name {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.delete-btn {
-  border: none;
-  border-radius: 999px;
-  padding: 8px 14px;
-  background: #ff7f9f;
-  color: #fff;
-  font-size: 13px;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-/* =========================
-   参加チェック一覧
-========================= */
-.attendance-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.attendance-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid #f6b3d1;
-  border-radius: 14px;
-  background: #fff7fb;
-  cursor: pointer;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.attendance-row input[type="checkbox"] {
-  width: 20px;
-  height: 20px;
-}
-
-.empty-message {
-  padding: 16px;
-  text-align: center;
-  color: #888;
-  background: #fff7fb;
-  border: 1px dashed #f6b3d1;
-  border-radius: 14px;
 }

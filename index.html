@@ -4,334 +4,585 @@
   <meta charset="UTF-8">
   <title>コジバド!! - 試合作成</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260422_11">
 </head>
 
 <body>
+  <h1 class="title">コジバド!!</h1>
 
-<h1 class="title">コジバド!!</h1>
+  <div class="top-nav">
+    <a href="players.html" class="nav-link">名簿管理</a>
+    <a href="attendance.html" class="nav-link">参加チェック</a>
+    <a href="index.html" class="nav-link active">試合作成</a>
+  </div>
 
-<div class="top-nav">
-  <a href="players.html">名簿管理</a>
-  <a href="attendance.html">参加チェック</a>
-  <a class="active" href="index.html">試合作成</a>
-</div>
+  <!-- タイマー -->
+  <div class="setting-block timer-block">
+    <h2>タイマー</h2>
+    <div class="timer-controls">
+      <label class="timer-label">時間</label>
+      <select id="timerMinutes" class="timer-select">
+        <option value="5">5分</option>
+        <option value="6">6分</option>
+        <option value="7">7分</option>
+        <option value="8">8分</option>
+        <option value="9">9分</option>
+        <option value="10">10分</option>
+      </select>
+      <button id="timerStartBtn" class="timer-btn timer-start">スタート</button>
+      <button id="timerStopBtn" class="timer-btn timer-stop" disabled>停止</button>
+    </div>
+    <div id="timerDisplay" class="timer-display">05:00</div>
+    <div id="timerStatus" class="timer-status">待機中</div>
+  </div>
 
-<div class="setting-block">
-  <h2>試合設定</h2>
+  <!-- 試合設定 -->
+  <div class="setting-block">
+    <h2>試合設定</h2>
+    <label>コート数</label>
+    <select id="courtsSelect">
+      <option value="1">1コート</option>
+      <option value="2">2コート</option>
+      <option value="3">3コート</option>
+      <option value="4">4コート</option>
+    </select>
 
-  <label>コート数</label>
-  <select id="courtsSelect">
-    <option value="1">1コート</option>
-    <option value="2">2コート</option>
-    <option value="3">3コート</option>
-    <option value="4">4コート</option>
-  </select>
+    <button id="setupBtn">第1試合を作成</button>
+    <p class="hint">※参加チェックで人数を選んでから押してね</p>
+  </div>
 
-  <button id="setupBtn">第1試合を作成</button>
-</div>
-
-<div class="setting-block">
-  <h2>途中参加 / 途中抜け</h2>
-
-  <label>途中参加（新規 or 復帰）</label>
-  <select id="joinSelect"></select>
-  <button id="joinBtn">途中参加を適用（次の試合から）</button>
-
-  <div style="height:12px"></div>
-
-  <label>途中抜け</label>
-  <select id="leaveSelect"></select>
-  <button id="leaveBtn">途中抜けを適用（次の試合から）</button>
-</div>
-
-<div id="rounds" class="setting-block">
-  <h2>試合履歴</h2>
-</div>
-
-<div id="nextRoundContainer"></div>
-
-<div id="playerSummary" class="setting-block">
-  <h2>プレイヤーステータス</h2>
-  <div id="playerTable"></div>
-</div>
-
-<script src="common.js"></script>
-
-<script>
-let players = [];
-let roundNumber = 1;
-let schedule = {};
-
-document.getElementById("setupBtn").onclick = () => {
-  const activeNames = getActivePlayers();
-
-  if (!activeNames || activeNames.length < 4) {
-    alert("参加者は4人以上必要だよ💦");
-    return;
-  }
-
-  players = normalizePlayers(activeNames);
-
-  // 全員いつでも参加できる前提
-  schedule = {};
-  players.forEach(p => {
-    schedule[p.name] = [{ from: 1, to: 999 }];
-  });
-  saveSchedule(schedule);
-
-  roundNumber = 1;
-  document.getElementById("rounds").innerHTML = "<h2>試合履歴</h2>";
-  document.getElementById("nextRoundContainer").innerHTML = "";
-
-  repopulateSelects();
-  createNextRound();
-};
-
-document.getElementById("joinBtn").onclick = () => {
-  const name = document.getElementById("joinSelect").value;
-  if (!name) return;
-
-  schedule = getSchedule();
-
-  // 既存にいる？
-  let p = players.find(x => x.name === name);
-
-  // 新規追加
-  if (!p) {
-    p = {
-      name,
-      idx: players.length,
-      games: 0,
-      refs: 0,
-      rests: 0,
-      partners: new Set(),
-      opponents: new Set(),
-      lastRoundPlayed: 0,
-      lastRefRound: 0,
-      lastRestRound: 0
-    };
-    players.push(p);
-  }
-
-  // スケジュールに参加区間を追加（次の試合＝roundNumberから）
-  if (!schedule[name]) schedule[name] = [];
-  schedule[name].push({ from: roundNumber, to: 999 });
-
-  // セグメント整形（重なりマージ）
-  schedule[name] = mergeSegments(schedule[name]);
-
-  saveSchedule(schedule);
-
-  // ✅ ここが今回の要：追いつかせない補正
-  applyJoinBaseline(players, name, roundNumber, schedule);
-
-  repopulateSelects();
-  alert(`途中参加/復帰を反映したよ！次の試合から ${name} 参加👍`);
-};
-
-document.getElementById("leaveBtn").onclick = () => {
-  const name = document.getElementById("leaveSelect").value;
-  if (!name) return;
-
-  schedule = getSchedule();
-  if (!schedule[name] || schedule[name].length === 0) {
-    schedule[name] = [{ from: 1, to: 999 }];
-  }
-
-  // 「今以降の参加」を止める：roundNumber から先をカット
-  schedule[name] = cutFromRound(schedule[name], roundNumber);
-
-  saveSchedule(schedule);
-  repopulateSelects();
-  alert(`途中抜けを反映したよ！次の試合から ${name} は不参加🙏`);
-};
-
-function createNextRound() {
-  const courtCount = Number(document.getElementById("courtsSelect").value);
-  schedule = getSchedule();
-
-  const result = generateRound(
-    players,
-    roundNumber,
-    courtCount,
-    getAiWeights(),
-    schedule
-  );
-
-  if (!result || !result.rounds || result.rounds.length === 0) {
-    alert("もう組めないかも🥺（参加人数 or 条件的に厳しい）");
-    return;
-  }
-
-  renderRound(result.rounds, result.refs, result.benches);
-  renderPlayerTable();
-  roundNumber++;
-
-  repopulateSelects();
-}
-
-function renderRound(rounds, refs, benches) {
-  const box = document.createElement("div");
-  box.className = "match-round";
-  box.innerHTML = `<h3>第${roundNumber}試合</h3>`;
-
-  rounds.forEach((r, i) => {
-    const refText = (refs[i] === null || refs[i] === undefined)
-      ? "（審判：なし）"
-      : `（審判：${players[refs[i]].name}）`;
-
-    box.innerHTML += `
-      <div class="match-card">
-        <div class="court-title">コート${i + 1} ${refText}</div>
-        <div class="teams">
-          <div class="team">
-            <div class="team-label">Team A</div>
-            <div class="team-members">${players[r.teamA[0]].name} ＆ ${players[r.teamA[1]].name}</div>
-          </div>
-          <div class="vs">vs</div>
-          <div class="team">
-            <div class="team-label">Team B</div>
-            <div class="team-members">${players[r.teamB[0]].name} ＆ ${players[r.teamB[1]].name}</div>
-          </div>
-        </div>
+  <!-- 途中参加 / 途中抜け -->
+  <div class="setting-block">
+    <h2>途中参加 / 途中抜け</h2>
+    <div class="two-col">
+      <div>
+        <label>途中参加（新規 or 復帰）</label>
+        <select id="joinSelect"></select>
+        <button id="joinBtn">途中参加を適用（次の試合から）</button>
       </div>
-    `;
-  });
+      <div>
+        <label>途中抜け</label>
+        <select id="leaveSelect"></select>
+        <button id="leaveBtn" class="danger">途中抜けを適用（次の試合から）</button>
+      </div>
+    </div>
+  </div>
 
-  if (benches && benches.length > 0) {
-    box.innerHTML += `<div class="bench">休憩：${benches.map(i => players[i].name).join(" / ")}</div>`;
-  }
+  <!-- 試合履歴 -->
+  <div id="rounds" class="setting-block">
+    <h2>試合履歴</h2>
+    <p id="noRoundMsg">まだ試合がありません。</p>
+  </div>
 
-  document.getElementById("rounds").appendChild(box);
+  <div id="nextRoundContainer"></div>
 
-  // 最新試合の下にボタン
-  document.getElementById("nextRoundContainer").innerHTML =
-    `<button onclick="createNextRound()">次の試合を作成</button>`;
-}
+  <!-- ステータス -->
+  <div id="playerSummary" class="setting-block" style="display:none;">
+    <h2>プレイヤーステータス</h2>
+    <div id="playerTable"></div>
+  </div>
 
-function renderPlayerTable() {
-  let html = `
-    <table class="status-table">
-      <tr>
-        <th>名前</th>
-        <th>試合</th>
-        <th>審判</th>
-        <th>休憩</th>
-      </tr>
-  `;
+  <script src="common.js?v=20260422_11"></script>
+  <script>
+    const STATE_KEY = "kojibado_state_v5";
+    let players = [];
+    let roundNumber = 1;
+    let schedule = {};
 
-  players.forEach(p => {
-    html += `
-      <tr>
-        <td>${p.name}</td>
-        <td>${p.games}</td>
-        <td>${p.refs}</td>
-        <td>${p.rests}</td>
-      </tr>
-    `;
-  });
+    // Androidのタップ保険
+    document.querySelectorAll(".nav-link").forEach(a => {
+      a.addEventListener("touchend", () => location.href = a.getAttribute("href"), { passive:true });
+    });
 
-  html += `</table>`;
-  document.getElementById("playerTable").innerHTML = html;
-}
+    window.addEventListener("load", () => {
+      schedule = getSchedule() || {};
+      loadState();
 
-/* ====== セレクト再生成 ====== */
-function repopulateSelects() {
-  const all = getAllPlayers();
-  const active = getActivePlayers();
-  const byName = new Map(players.map(p => [p.name, p]));
+      document.getElementById("setupBtn").addEventListener("click", setupFirstRound);
+      document.getElementById("joinBtn").addEventListener("click", applyJoin);
+      document.getElementById("leaveBtn").addEventListener("click", applyLeave);
 
-  const source = (all && all.length > 0) ? all : active;
+      repopulateSelects();
+      renderPlayerTable();
 
-  const joinCandidates = [];
-  source.forEach(name => {
-    const p = byName.get(name);
-    if (!p) {
-      joinCandidates.push({ name, kind: "new" });
-    } else {
-      if (!isAvailableAtRound(name, roundNumber, schedule)) {
-        joinCandidates.push({ name, kind: "return" });
+      initTimer();
+    });
+
+    function saveState() {
+      const state = {
+        roundNumber,
+        schedule,
+        players,
+        historyHtml: document.getElementById("rounds").innerHTML,
+        courts: document.getElementById("courtsSelect").value
+      };
+      localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    }
+
+    function loadState() {
+      const raw = localStorage.getItem(STATE_KEY);
+      if (!raw) return;
+      try {
+        const s = JSON.parse(raw);
+        roundNumber = s.roundNumber || 1;
+        schedule = s.schedule || getSchedule() || {};
+        players = s.players || [];
+
+        if (s.historyHtml) {
+          document.getElementById("rounds").innerHTML = s.historyHtml;
+          const no = document.getElementById("noRoundMsg");
+          if (no) no.remove();
+        }
+        if (s.courts) document.getElementById("courtsSelect").value = s.courts;
+
+        if (players.length > 0) {
+          document.getElementById("playerSummary").style.display = "block";
+          document.getElementById("nextRoundContainer").innerHTML =
+            `<button onclick="createNextRound()">次の試合を作成</button>`;
+        }
+      } catch (e) {
+        console.log("state復元失敗", e);
       }
     }
-  });
 
-  const joinSel = document.getElementById("joinSelect");
-  joinSel.innerHTML = "";
-  if (joinCandidates.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "（途中参加/復帰候補なし）";
-    joinSel.appendChild(opt);
-  } else {
-    joinCandidates.forEach(obj => {
-      const opt = document.createElement("option");
-      opt.value = obj.name;
-      opt.textContent = obj.kind === "return" ? `【復帰】${obj.name}` : obj.name;
-      joinSel.appendChild(opt);
-    });
-  }
+    function setupFirstRound() {
+      const activeNames = getActivePlayers();
+      if (!activeNames || activeNames.length < 4) {
+        alert("参加者は4人以上必要だよ💦（参加チェックで選んでね）");
+        return;
+      }
 
-  const leaveSel = document.getElementById("leaveSelect");
-  leaveSel.innerHTML = "";
-  const leaveCandidates = players
-    .filter(p => isAvailableAtRound(p.name, roundNumber, schedule))
-    .map(p => p.name);
+      players = normalizePlayers(activeNames);
 
-  if (leaveCandidates.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "（途中抜け候補なし）";
-    leaveSel.appendChild(opt);
-  } else {
-    leaveCandidates.forEach(name => {
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      leaveSel.appendChild(opt);
-    });
-  }
-}
+      schedule = {};
+      players.forEach(p => schedule[p.name] = [{ from: 1, to: 9999 }]);
+      saveSchedule(schedule);
 
-/* ====== schedule のセグメント整形 ====== */
-function mergeSegments(segs) {
-  if (!segs || segs.length === 0) return [];
-  const s = segs
-    .map(x => ({ from: Number(x.from), to: Number(x.to) }))
-    .sort((a,b) => a.from - b.from);
+      roundNumber = 1;
+      document.getElementById("rounds").innerHTML = "<h2>試合履歴</h2>";
+      document.getElementById("nextRoundContainer").innerHTML = "";
+      document.getElementById("playerSummary").style.display = "block";
 
-  const merged = [s[0]];
-  for (let i = 1; i < s.length; i++) {
-    const last = merged[merged.length - 1];
-    const cur = s[i];
-    if (cur.from <= last.to + 1) {
-      last.to = Math.max(last.to, cur.to);
-    } else {
-      merged.push(cur);
+      saveState();
+      repopulateSelects();
+      renderPlayerTable();
+      createNextRound();
     }
-  }
-  return merged;
-}
 
-function cutFromRound(segs, fromRound) {
-  if (!segs || segs.length === 0) return [];
-  const out = [];
-  for (const seg of segs) {
-    // segが完全に fromRound より前なら残す
-    if (seg.to < fromRound) {
-      out.push({ ...seg });
-      continue;
-    }
-    // segが fromRound を跨ぐなら to を切る
-    if (seg.from < fromRound && seg.to >= fromRound) {
-      out.push({ from: seg.from, to: fromRound - 1 });
-      continue;
-    }
-    // seg.from >= fromRound は未来なので捨てる（抜け）
-  }
-  return out;
-}
-</script>
+    function createNextRound() {
+      schedule = getSchedule() || schedule || {};
+      const courtCount = Number(document.getElementById("courtsSelect").value);
 
+      const result = generateRound(players, roundNumber, courtCount, getAiWeights(), schedule);
+      if (!result || !result.rounds || result.rounds.length === 0) {
+        alert("もう組めないかも🥺（人数・コート数・途中参加/抜け設定を確認してね）");
+        return;
+      }
+
+      renderRound(result.rounds, result.refs, result.benches);
+      renderPlayerTable();
+
+      roundNumber++;
+      saveState();
+      repopulateSelects();
+    }
+
+    function renderRound(rounds, refs, benches) {
+      const area = document.getElementById("rounds");
+      const no = document.getElementById("noRoundMsg");
+      if (no) no.remove();
+
+      const box = document.createElement("div");
+      box.className = "match-round";
+      box.innerHTML = `<h3>第${roundNumber}試合</h3>`;
+
+      rounds.forEach((r, i) => {
+        const card = document.createElement("div");
+        card.className = "match-card";
+        const refName = players[refs[i]]?.name ?? "?";
+
+        card.innerHTML = `
+          <div class="court-line">コート${i + 1}<span class="ref">（審判：${refName}）</span></div>
+          <div class="teams">
+            <div class="team">Team A：<b>${players[r.teamA[0]]?.name ?? "?"}</b> ＆ <b>${players[r.teamA[1]]?.name ?? "?"}</b></div>
+            <div class="vs">vs</div>
+            <div class="team">Team B：<b>${players[r.teamB[0]]?.name ?? "?"}</b> ＆ <b>${players[r.teamB[1]]?.name ?? "?"}</b></div>
+          </div>
+        `;
+        box.appendChild(card);
+      });
+
+      if (benches && benches.length > 0) {
+        const rest = document.createElement("div");
+        rest.className = "bench";
+        rest.textContent = "休憩：" + benches.map(i => players[i]?.name ?? "?").join(" / ");
+        box.appendChild(rest);
+      }
+
+      area.appendChild(box);
+
+      document.getElementById("nextRoundContainer").innerHTML =
+        `<button onclick="createNextRound()">次の試合を作成</button>`;
+    }
+
+    function renderPlayerTable() {
+      if (!players || players.length === 0) return;
+
+      let html = `
+        <table class="status-table">
+          <tr><th>名前</th><th>試合</th><th>審判</th><th>休憩</th></tr>
+      `;
+      players.forEach(p => {
+        html += `
+          <tr>
+            <td>${p.name}</td>
+            <td>${p.games ?? 0}</td>
+            <td>${p.refs ?? 0}</td>
+            <td>${p.rests ?? 0}</td>
+          </tr>
+        `;
+      });
+      html += `</table>`;
+      document.getElementById("playerTable").innerHTML = html;
+    }
+
+    // 途中参加/復帰・候補の出し方（保険付き）
+    function repopulateSelects() {
+      schedule = getSchedule() || schedule || {};
+
+      const all = getAllPlayers();
+      const active = getActivePlayers();
+      const byName = new Map(players.map(p => [p.name, p]));
+      const source = (all && all.length > 0) ? all : active;
+
+      const joinCandidates = [];
+      source.forEach(name => {
+        const p = byName.get(name);
+        if (!p) {
+          joinCandidates.push({ name, kind: "new" });
+        } else {
+          if (!isAvailableAtRound(name, roundNumber, schedule)) {
+            joinCandidates.push({ name, kind: "return" });
+          }
+        }
+      });
+
+      const joinSel = document.getElementById("joinSelect");
+      joinSel.innerHTML = "";
+      if (joinCandidates.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "（途中参加/復帰候補なし）";
+        joinSel.appendChild(opt);
+      } else {
+        joinCandidates.forEach(obj => {
+          const opt = document.createElement("option");
+          opt.value = obj.name;
+          opt.textContent = obj.kind === "return" ? `【復帰】${obj.name}` : obj.name;
+          joinSel.appendChild(opt);
+        });
+      }
+
+      const leaveSel = document.getElementById("leaveSelect");
+      leaveSel.innerHTML = "";
+      const leaveCandidates = players
+        .filter(p => isAvailableAtRound(p.name, roundNumber, schedule))
+        .map(p => p.name);
+
+      if (leaveCandidates.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "（途中抜け候補なし）";
+        leaveSel.appendChild(opt);
+      } else {
+        leaveCandidates.forEach(name => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          leaveSel.appendChild(opt);
+        });
+      }
+    }
+
+    function mergeSegments(segs) {
+      if (!segs || segs.length === 0) return [];
+      const s = segs.map(x => ({ from: Number(x.from), to: Number(x.to) }))
+                    .sort((a,b) => a.from - b.from);
+
+      const merged = [s[0]];
+      for (let i = 1; i < s.length; i++) {
+        const last = merged[merged.length - 1];
+        const cur = s[i];
+        if (cur.from <= last.to + 1) last.to = Math.max(last.to, cur.to);
+        else merged.push(cur);
+      }
+      return merged;
+    }
+
+    function cutFromRound(segs, fromRound) {
+      if (!segs || segs.length === 0) return [];
+      const out = [];
+      for (const seg of segs) {
+        if (seg.to < fromRound) out.push({ ...seg });
+        else if (seg.from < fromRound && seg.to >= fromRound) out.push({ from: seg.from, to: fromRound - 1 });
+      }
+      return out;
+    }
+
+    function applyJoin() {
+      const name = document.getElementById("joinSelect").value;
+      if (!name) return;
+
+      schedule = getSchedule() || schedule || {};
+      const alreadyInPlayers = players.find(p => p.name === name);
+
+      // すでに参加中なら何もしない
+      if (alreadyInPlayers && isAvailableAtRound(name, roundNumber, schedule)) {
+        alert("もう参加中だよ💖");
+        return;
+      }
+
+      // scheduleに参加区間追加（次の試合から）
+      if (!schedule[name]) schedule[name] = [];
+      schedule[name].push({ from: roundNumber, to: 9999 });
+      schedule[name] = mergeSegments(schedule[name]);
+      saveSchedule(schedule);
+
+      // playersにいなければ追加
+      if (!alreadyInPlayers) {
+        players.push({
+          name,
+          idx: players.length,
+          games: 0, refs: 0, rests: 0,
+          partnersCount:{}, opponentsCount:{},
+          lastPairedRound:{}, lastOppRound:{},
+          lastRoundPlayed: roundNumber - 1,
+          lastRefRound: 0,
+          lastRestRound: roundNumber - 1,
+          joinRound: roundNumber,
+          gamesAtJoin: 0, refsAtJoin: 0, restsAtJoin: 0
+        });
+      } else {
+        // 復帰：基準点を今にする（欠席分は取り戻さない）
+        alreadyInPlayers.joinRound = roundNumber;
+        alreadyInPlayers.gamesAtJoin = alreadyInPlayers.games || 0;
+        alreadyInPlayers.refsAtJoin  = alreadyInPlayers.refs  || 0;
+        alreadyInPlayers.restsAtJoin = alreadyInPlayers.rests || 0;
+      }
+
+      // ★追いつき禁止：現状の少ない人の水準に合わせる
+      applyJoinBaseline(players, name, roundNumber, schedule);
+
+      // activePlayersにも入れる（整合用）
+      const act = getActivePlayers();
+      if (!act.includes(name)) {
+        act.push(name);
+        setActivePlayers(act);
+      }
+
+      saveState();
+      repopulateSelects();
+      renderPlayerTable();
+      alert(`途中参加/復帰OK💖（${roundNumber}試合目から）`);
+    }
+
+    function applyLeave() {
+      const name = document.getElementById("leaveSelect").value;
+      if (!name) return;
+
+      schedule = getSchedule() || schedule || {};
+      if (!schedule[name]) schedule[name] = [{ from: 1, to: 9999 }];
+
+      schedule[name] = cutFromRound(schedule[name], roundNumber);
+      saveSchedule(schedule);
+
+      // activePlayersからも外す（整合用）
+      const act = getActivePlayers().filter(n => n !== name);
+      setActivePlayers(act);
+
+      saveState();
+      repopulateSelects();
+      alert(`途中抜けOK🥺（${roundNumber}試合目から不参加）`);
+    }
+
+    /* ===============================
+       タイマー（5〜10分）+ アラーム
+    =============================== */
+    const timerState = {
+      running: false,
+      endAt: 0,
+      tickId: null,
+      audioCtx: null,
+      alarmId: null,
+      wakeLock: null,
+    };
+
+    function pad2(n){ return String(n).padStart(2, "0"); }
+    function formatMMSS(ms){
+      const s = Math.max(0, Math.ceil(ms / 1000));
+      const m = Math.floor(s / 60);
+      const ss = s % 60;
+      return `${pad2(m)}:${pad2(ss)}`;
+    }
+
+    async function ensureAudioReady(){
+      if (!timerState.audioCtx) {
+        timerState.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (timerState.audioCtx.state === "suspended") {
+        await timerState.audioCtx.resume();
+      }
+    }
+
+    function beepOnce(){
+      const ctx = timerState.audioCtx;
+      if (!ctx) return;
+
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+
+      o.type = "sine";
+      o.frequency.value = 1100;
+      g.gain.value = 0.12;
+
+      o.connect(g);
+      g.connect(ctx.destination);
+
+      const now = ctx.currentTime;
+      o.start(now);
+      o.stop(now + 0.2);
+    }
+
+    function startAlarmLoop(){
+      stopAlarmLoop();
+      let count = 0;
+      timerState.alarmId = setInterval(() => {
+        beepOnce();
+        if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
+        count++;
+        if (count >= 12) stopAlarmLoop();
+      }, 500);
+    }
+
+    function stopAlarmLoop(){
+      if (timerState.alarmId) {
+        clearInterval(timerState.alarmId);
+        timerState.alarmId = null;
+      }
+    }
+
+    async function requestWakeLock(){
+      try {
+        if ("wakeLock" in navigator && navigator.wakeLock?.request) {
+          timerState.wakeLock = await navigator.wakeLock.request("screen");
+        }
+      } catch(e) {}
+    }
+
+    async function releaseWakeLock(){
+      try {
+        if (timerState.wakeLock) {
+          await timerState.wakeLock.release();
+          timerState.wakeLock = null;
+        }
+      } catch(e) {}
+    }
+
+    function updateTimerUI(running){
+      document.getElementById("timerStartBtn").disabled = running;
+      document.getElementById("timerStopBtn").disabled  = !running;
+      document.getElementById("timerMinutes").disabled  = running;
+    }
+
+    function setStatus(text){
+      const el = document.getElementById("timerStatus");
+      if (el) el.textContent = text;
+    }
+
+    function tick(){
+      const display = document.getElementById("timerDisplay");
+      const remain = timerState.endAt - Date.now();
+      if (display) display.textContent = formatMMSS(remain);
+      if (remain <= 0) finishTimer();
+    }
+
+    function startTimer(){
+      const minutes = Number(document.getElementById("timerMinutes").value || 5);
+      stopAlarmLoop();
+
+      timerState.running = true;
+      timerState.endAt = Date.now() + minutes * 60 * 1000;
+
+      updateTimerUI(true);
+      setStatus("カウント中…");
+
+      if (timerState.tickId) clearInterval(timerState.tickId);
+      timerState.tickId = setInterval(tick, 250);
+      tick();
+    }
+
+    async function finishTimer(){
+      if (timerState.tickId) {
+        clearInterval(timerState.tickId);
+        timerState.tickId = null;
+      }
+      timerState.running = false;
+      updateTimerUI(false);
+
+      document.getElementById("timerDisplay").textContent = "00:00";
+      setStatus("時間！🔔");
+
+      try {
+        await ensureAudioReady();
+        startAlarmLoop();
+      } catch(e) {}
+
+      await releaseWakeLock();
+    }
+
+    async function stopTimer(){
+      stopAlarmLoop();
+      if (timerState.tickId) {
+        clearInterval(timerState.tickId);
+        timerState.tickId = null;
+      }
+      timerState.running = false;
+      updateTimerUI(false);
+      setStatus("停止");
+
+      const minutes = Number(document.getElementById("timerMinutes").value || 5);
+      document.getElementById("timerDisplay").textContent = `${pad2(minutes)}:00`;
+
+      await releaseWakeLock();
+    }
+
+    function initTimer(){
+      const sel = document.getElementById("timerMinutes");
+      const display = document.getElementById("timerDisplay");
+
+      const minutes = Number(sel.value || 5);
+      display.textContent = `${pad2(minutes)}:00`;
+
+      sel.addEventListener("change", () => {
+        if (!timerState.running) {
+          const m = Number(sel.value || 5);
+          display.textContent = `${pad2(m)}:00`;
+        }
+      });
+
+      document.getElementById("timerStartBtn").addEventListener("click", async () => {
+        await ensureAudioReady(); // Start押した時点で音許可
+        await requestWakeLock();
+        startTimer();
+      });
+
+      document.getElementById("timerStopBtn").addEventListener("click", stopTimer);
+
+      window.addEventListener("beforeunload", () => {
+        stopAlarmLoop();
+        if (timerState.tickId) clearInterval(timerState.tickId);
+      });
+    }
+  </script>
 </body>
 </html>

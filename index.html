@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>コジバド!! - 試合作成</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css?v=20260422_11">
+  <link rel="stylesheet" href="style.css?v=20260422_12">
 </head>
 
 <body>
@@ -14,26 +14,6 @@
     <a href="players.html" class="nav-link">名簿管理</a>
     <a href="attendance.html" class="nav-link">参加チェック</a>
     <a href="index.html" class="nav-link active">試合作成</a>
-  </div>
-
-  <!-- タイマー -->
-  <div class="setting-block timer-block">
-    <h2>タイマー</h2>
-    <div class="timer-controls">
-      <label class="timer-label">時間</label>
-      <select id="timerMinutes" class="timer-select">
-        <option value="5">5分</option>
-        <option value="6">6分</option>
-        <option value="7">7分</option>
-        <option value="8">8分</option>
-        <option value="9">9分</option>
-        <option value="10">10分</option>
-      </select>
-      <button id="timerStartBtn" class="timer-btn timer-start">スタート</button>
-      <button id="timerStopBtn" class="timer-btn timer-stop" disabled>停止</button>
-    </div>
-    <div id="timerDisplay" class="timer-display">05:00</div>
-    <div id="timerStatus" class="timer-status">待機中</div>
   </div>
 
   <!-- 試合設定 -->
@@ -74,6 +54,26 @@
     <p id="noRoundMsg">まだ試合がありません。</p>
   </div>
 
+  <!-- ✅ タイマーはここに置く（ただし毎回「最新試合の下」に移動させる） -->
+  <div id="timerBlock" class="setting-block timer-block">
+    <h2>タイマー</h2>
+    <div class="timer-controls">
+      <label class="timer-label">時間</label>
+      <select id="timerMinutes" class="timer-select">
+        <option value="5">5分</option>
+        <option value="6">6分</option>
+        <option value="7">7分</option>
+        <option value="8">8分</option>
+        <option value="9">9分</option>
+        <option value="10">10分</option>
+      </select>
+      <button id="timerStartBtn" class="timer-btn timer-start">スタート</button>
+      <button id="timerStopBtn" class="timer-btn timer-stop" disabled>停止</button>
+    </div>
+    <div id="timerDisplay" class="timer-display">05:00</div>
+    <div id="timerStatus" class="timer-status">待機中</div>
+  </div>
+
   <div id="nextRoundContainer"></div>
 
   <!-- ステータス -->
@@ -82,7 +82,7 @@
     <div id="playerTable"></div>
   </div>
 
-  <script src="common.js?v=20260422_11"></script>
+  <script src="common.js?v=20260422_12"></script>
   <script>
     const STATE_KEY = "kojibado_state_v5";
     let players = [];
@@ -187,6 +187,14 @@
       repopulateSelects();
     }
 
+    // ✅ タイマーを「最新の試合の下」に移動させる
+    function moveTimerUnderLatestMatch(latestMatchBox) {
+      const timer = document.getElementById("timerBlock");
+      if (!timer) return;
+      // latestMatchBox の直後にタイマーを移動（DOM移動なので常に最新の下になる）
+      latestMatchBox.after(timer);
+    }
+
     function renderRound(rounds, refs, benches) {
       const area = document.getElementById("rounds");
       const no = document.getElementById("noRoundMsg");
@@ -220,6 +228,9 @@
       }
 
       area.appendChild(box);
+
+      // ✅ ここでタイマーを「最新試合の直下」に移動
+      moveTimerUnderLatestMatch(box);
 
       document.getElementById("nextRoundContainer").innerHTML =
         `<button onclick="createNextRound()">次の試合を作成</button>`;
@@ -308,7 +319,6 @@
       if (!segs || segs.length === 0) return [];
       const s = segs.map(x => ({ from: Number(x.from), to: Number(x.to) }))
                     .sort((a,b) => a.from - b.from);
-
       const merged = [s[0]];
       for (let i = 1; i < s.length; i++) {
         const last = merged[merged.length - 1];
@@ -334,22 +344,19 @@
       if (!name) return;
 
       schedule = getSchedule() || schedule || {};
-      const alreadyInPlayers = players.find(p => p.name === name);
+      const already = players.find(p => p.name === name);
 
-      // すでに参加中なら何もしない
-      if (alreadyInPlayers && isAvailableAtRound(name, roundNumber, schedule)) {
+      if (already && isAvailableAtRound(name, roundNumber, schedule)) {
         alert("もう参加中だよ💖");
         return;
       }
 
-      // scheduleに参加区間追加（次の試合から）
       if (!schedule[name]) schedule[name] = [];
       schedule[name].push({ from: roundNumber, to: 9999 });
       schedule[name] = mergeSegments(schedule[name]);
       saveSchedule(schedule);
 
-      // playersにいなければ追加
-      if (!alreadyInPlayers) {
+      if (!already) {
         players.push({
           name,
           idx: players.length,
@@ -362,18 +369,11 @@
           joinRound: roundNumber,
           gamesAtJoin: 0, refsAtJoin: 0, restsAtJoin: 0
         });
-      } else {
-        // 復帰：基準点を今にする（欠席分は取り戻さない）
-        alreadyInPlayers.joinRound = roundNumber;
-        alreadyInPlayers.gamesAtJoin = alreadyInPlayers.games || 0;
-        alreadyInPlayers.refsAtJoin  = alreadyInPlayers.refs  || 0;
-        alreadyInPlayers.restsAtJoin = alreadyInPlayers.rests || 0;
       }
 
-      // ★追いつき禁止：現状の少ない人の水準に合わせる
+      // ✅ 追いつかせない補正
       applyJoinBaseline(players, name, roundNumber, schedule);
 
-      // activePlayersにも入れる（整合用）
       const act = getActivePlayers();
       if (!act.includes(name)) {
         act.push(name);
@@ -396,7 +396,6 @@
       schedule[name] = cutFromRound(schedule[name], roundNumber);
       saveSchedule(schedule);
 
-      // activePlayersからも外す（整合用）
       const act = getActivePlayers().filter(n => n !== name);
       setActivePlayers(act);
 
@@ -407,9 +406,11 @@
 
     /* ===============================
        タイマー（5〜10分）+ アラーム
+       ✅ 修正点：アラーム中でも「停止」で確実に止める
     =============================== */
     const timerState = {
       running: false,
+      alarming: false,   // ★追加：アラーム鳴ってる最中
       endAt: 0,
       tickId: null,
       audioCtx: null,
@@ -437,17 +438,13 @@
     function beepOnce(){
       const ctx = timerState.audioCtx;
       if (!ctx) return;
-
       const o = ctx.createOscillator();
       const g = ctx.createGain();
-
       o.type = "sine";
       o.frequency.value = 1100;
       g.gain.value = 0.12;
-
       o.connect(g);
       g.connect(ctx.destination);
-
       const now = ctx.currentTime;
       o.start(now);
       o.stop(now + 0.2);
@@ -455,12 +452,18 @@
 
     function startAlarmLoop(){
       stopAlarmLoop();
+      timerState.alarming = true;
+      updateTimerUI();
+
       let count = 0;
       timerState.alarmId = setInterval(() => {
         beepOnce();
         if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
         count++;
-        if (count >= 12) stopAlarmLoop();
+        if (count >= 12) {
+          // 自動停止（でもユーザーはいつでも停止できる）
+          stopAlarmLoop();
+        }
       }, 500);
     }
 
@@ -469,6 +472,8 @@
         clearInterval(timerState.alarmId);
         timerState.alarmId = null;
       }
+      timerState.alarming = false;
+      updateTimerUI();
     }
 
     async function requestWakeLock(){
@@ -488,10 +493,18 @@
       } catch(e) {}
     }
 
-    function updateTimerUI(running){
-      document.getElementById("timerStartBtn").disabled = running;
-      document.getElementById("timerStopBtn").disabled  = !running;
-      document.getElementById("timerMinutes").disabled  = running;
+    function updateTimerUI(){
+      const startBtn = document.getElementById("timerStartBtn");
+      const stopBtn  = document.getElementById("timerStopBtn");
+      const sel      = document.getElementById("timerMinutes");
+
+      const active = timerState.running || timerState.alarming;
+
+      startBtn.disabled = active;                  // 鳴ってる間も再スタートさせない
+      stopBtn.disabled  = !active;                 // ★鳴ってる間は停止できる
+      sel.disabled      = active;
+
+      stopBtn.textContent = timerState.alarming ? "アラーム停止" : "停止";
     }
 
     function setStatus(text){
@@ -508,12 +521,12 @@
 
     function startTimer(){
       const minutes = Number(document.getElementById("timerMinutes").value || 5);
-      stopAlarmLoop();
 
+      stopAlarmLoop();             // 鳴ってたら止める
       timerState.running = true;
       timerState.endAt = Date.now() + minutes * 60 * 1000;
 
-      updateTimerUI(true);
+      updateTimerUI();
       setStatus("カウント中…");
 
       if (timerState.tickId) clearInterval(timerState.tickId);
@@ -522,12 +535,13 @@
     }
 
     async function finishTimer(){
+      if (!timerState.running && !timerState.alarming) return;
+
       if (timerState.tickId) {
         clearInterval(timerState.tickId);
         timerState.tickId = null;
       }
       timerState.running = false;
-      updateTimerUI(false);
 
       document.getElementById("timerDisplay").textContent = "00:00";
       setStatus("時間！🔔");
@@ -535,19 +549,26 @@
       try {
         await ensureAudioReady();
         startAlarmLoop();
-      } catch(e) {}
+      } catch(e) {
+        // 音が出ない端末でもUIは動かす
+        timerState.alarming = true;
+        updateTimerUI();
+      }
 
       await releaseWakeLock();
     }
 
     async function stopTimer(){
+      // ★停止は「カウント中」でも「アラーム中」でも効く
       stopAlarmLoop();
+
       if (timerState.tickId) {
         clearInterval(timerState.tickId);
         timerState.tickId = null;
       }
       timerState.running = false;
-      updateTimerUI(false);
+
+      updateTimerUI();
       setStatus("停止");
 
       const minutes = Number(document.getElementById("timerMinutes").value || 5);
@@ -562,9 +583,10 @@
 
       const minutes = Number(sel.value || 5);
       display.textContent = `${pad2(minutes)}:00`;
+      updateTimerUI();
 
       sel.addEventListener("change", () => {
-        if (!timerState.running) {
+        if (!timerState.running && !timerState.alarming) {
           const m = Number(sel.value || 5);
           display.textContent = `${pad2(m)}:00`;
         }
@@ -578,11 +600,19 @@
 
       document.getElementById("timerStopBtn").addEventListener("click", stopTimer);
 
+      // アラーム中に「表示タップでも止めたい」保険（任意だけど便利）
+      display.addEventListener("click", () => {
+        if (timerState.alarming) stopTimer();
+      });
+
       window.addEventListener("beforeunload", () => {
         stopAlarmLoop();
         if (timerState.tickId) clearInterval(timerState.tickId);
       });
     }
+
+    // グローバルにしてonclickから呼べるように
+    window.createNextRound = createNextRound;
   </script>
 </body>
 </html>

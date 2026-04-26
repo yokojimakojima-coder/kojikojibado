@@ -4,16 +4,15 @@
   <meta charset="UTF-8">
   <title>コジバド!! - 参加チェック</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css?v=20260422_10">
+  <link rel="stylesheet" href="style.css?v=20260422_11">
 </head>
 <body>
-
   <h1 class="title">コジバド!!</h1>
 
   <div class="top-nav">
-    <a href="players.html">名簿管理</a>
-    <a class="active" href="attendance.html">参加チェック</a>
-    <a href="index.html">試合作成</a>
+    <a class="nav-link" href="players.html">名簿管理</a>
+    <a class="nav-link active" href="attendance.html">参加チェック</a>
+    <a class="nav-link" href="index.html">試合作成</a>
   </div>
 
   <div class="setting-block">
@@ -22,75 +21,73 @@
     <div class="vertical-form">
       <button id="allOnBtn" class="main-btn">全員ON</button>
       <button id="allOffBtn" class="danger-btn">全員OFF</button>
+      <button id="saveBtn">保存して試合作成へ</button>
     </div>
 
-    <div id="attendanceList" class="attendance-list"></div>
+    <div id="checks" class="check-list"></div>
   </div>
 
-  <script src="common.js?v=20260422_10"></script>
+  <script src="common.js?v=20260422_11"></script>
   <script>
-    function getPlayersSafe() {
-      return getAllPlayers ? getAllPlayers() : JSON.parse(localStorage.getItem("allPlayers") || "[]");
-    }
+    function render() {
+      const all = getAllPlayers();
+      const active = new Set(getActivePlayers());
+      const box = document.getElementById("checks");
+      box.innerHTML = "";
 
-    function getActiveSafe() {
-      return getActivePlayers ? getActivePlayers() : JSON.parse(localStorage.getItem("activePlayers") || "[]");
-    }
-
-    function saveActiveSafe(activePlayers) {
-      localStorage.setItem("activePlayers", JSON.stringify(activePlayers));
-    }
-
-    function renderAttendance() {
-      const allPlayers = getPlayersSafe();
-      const activePlayers = getActiveSafe();
-      const list = document.getElementById("attendanceList");
-
-      list.innerHTML = "";
-
-      if (allPlayers.length === 0) {
-        list.innerHTML = `<div class="empty-message">先に名簿管理で名前を登録してね</div>`;
+      if (all.length === 0) {
+        box.innerHTML = `<div class="empty-message">先に名簿管理で名前を登録してね</div>`;
         return;
       }
 
-      allPlayers.forEach((name) => {
-        const checked = activePlayers.includes(name);
-
+      all.forEach(name => {
         const row = document.createElement("label");
-        row.className = "attendance-row";
+        row.className = "check-item";
         row.innerHTML = `
-          <input type="checkbox" value="${name}" ${checked ? "checked" : ""}>
+          <input type="checkbox" class="chk" data-name="${name}" ${active.has(name) ? "checked" : ""}>
           <span>${name}</span>
         `;
-        list.appendChild(row);
-      });
-
-      bindCheckboxEvents();
-    }
-
-    function bindCheckboxEvents() {
-      const checkboxes = document.querySelectorAll('#attendanceList input[type="checkbox"]');
-      checkboxes.forEach(cb => {
-        cb.addEventListener("change", () => {
-          const active = Array.from(checkboxes)
-            .filter(x => x.checked)
-            .map(x => x.value);
-
-          saveActiveSafe(active);
-        });
+        box.appendChild(row);
       });
     }
 
-    function setAllAttendance(flag) {
-      const allPlayers = getPlayersSafe();
-      saveActiveSafe(flag ? allPlayers : []);
-      renderAttendance();
+    function setAll(flag){
+      const all = getAllPlayers();
+      setActivePlayers(flag ? all : []);
+      render();
     }
 
-    document.getElementById("allOnBtn").addEventListener("click", () => setAllAttendance(true));
-    document.getElementById("allOffBtn").addEventListener("click", () => setAllAttendance(false));
+    document.getElementById("allOnBtn").addEventListener("click", () => setAll(true));
+    document.getElementById("allOffBtn").addEventListener("click", () => setAll(false));
 
-    renderAttendance();
+    document.getElementById("saveBtn").addEventListener("click", () => {
+      const checked = [];
+      document.querySelectorAll(".chk").forEach(cb => {
+        if (cb.checked) checked.push(cb.dataset.name);
+      });
+
+      if (checked.length < 4) {
+        alert("4人以上チェックしてね💦");
+        return;
+      }
+
+      setActivePlayers(checked);
+      localStorage.removeItem("kojibado_state_v5"); // 参加者変えたら初期化が安全
+      alert("保存したよ💖 試合作成へ行くね！");
+      location.href = "index.html";
+    });
+
+    // チェックのたびに即保存（保険）
+    document.addEventListener("change", (e) => {
+      if (!e.target.classList.contains("chk")) return;
+      const checked = [];
+      document.querySelectorAll(".chk").forEach(cb => {
+        if (cb.checked) checked.push(cb.dataset.name);
+      });
+      setActivePlayers(checked);
+    });
+
+    render();
   </script>
 </body>
 </html>

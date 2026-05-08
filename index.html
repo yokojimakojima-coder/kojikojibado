@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <title>コジバド!! - 試合作成</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css?v=20260422_12">
+  <meta name="theme-color" content="#ff66b3">
+  <link rel="stylesheet" href="style.css?v=20260422_13">
 </head>
 
 <body>
@@ -19,6 +20,7 @@
   <!-- 試合設定 -->
   <div class="setting-block">
     <h2>試合設定</h2>
+
     <label>コート数</label>
     <select id="courtsSelect">
       <option value="1">1コート</option>
@@ -34,12 +36,14 @@
   <!-- 途中参加 / 途中抜け -->
   <div class="setting-block">
     <h2>途中参加 / 途中抜け</h2>
+
     <div class="two-col">
       <div>
         <label>途中参加（新規 or 復帰）</label>
         <select id="joinSelect"></select>
         <button id="joinBtn">途中参加を適用（次の試合から）</button>
       </div>
+
       <div>
         <label>途中抜け</label>
         <select id="leaveSelect"></select>
@@ -54,7 +58,7 @@
     <p id="noRoundMsg">まだ試合がありません。</p>
   </div>
 
-  <!-- ✅ タイマーはここに置く（ただし毎回「最新試合の下」に移動させる） -->
+  <!-- タイマー（最初はここ。試合が作られると“最新の試合の下”へ移動） -->
   <div id="timerBlock" class="setting-block timer-block">
     <h2>タイマー</h2>
     <div class="timer-controls">
@@ -67,13 +71,16 @@
         <option value="9">9分</option>
         <option value="10">10分</option>
       </select>
+
       <button id="timerStartBtn" class="timer-btn timer-start">スタート</button>
       <button id="timerStopBtn" class="timer-btn timer-stop" disabled>停止</button>
     </div>
+
     <div id="timerDisplay" class="timer-display">05:00</div>
     <div id="timerStatus" class="timer-status">待機中</div>
   </div>
 
+  <!-- 次の試合ボタンは、毎回“最新試合＆タイマーの下”へ -->
   <div id="nextRoundContainer"></div>
 
   <!-- ステータス -->
@@ -82,14 +89,14 @@
     <div id="playerTable"></div>
   </div>
 
-  <script src="common.js?v=20260422_12"></script>
+  <script src="common.js?v=20260422_13"></script>
   <script>
     const STATE_KEY = "kojibado_state_v5";
     let players = [];
     let roundNumber = 1;
     let schedule = {};
 
-    // Androidのタップ保険
+    // Android タップ保険
     document.querySelectorAll(".nav-link").forEach(a => {
       a.addEventListener("touchend", () => location.href = a.getAttribute("href"), { passive:true });
     });
@@ -106,6 +113,9 @@
       renderPlayerTable();
 
       initTimer();
+
+      // 既に履歴がある場合、タイマーと次ボタンを“最新試合の下”へ寄せる
+      moveTimerAndNextUnderLatest();
     });
 
     function saveState() {
@@ -122,6 +132,7 @@
     function loadState() {
       const raw = localStorage.getItem(STATE_KEY);
       if (!raw) return;
+
       try {
         const s = JSON.parse(raw);
         roundNumber = s.roundNumber || 1;
@@ -133,6 +144,7 @@
           const no = document.getElementById("noRoundMsg");
           if (no) no.remove();
         }
+
         if (s.courts) document.getElementById("courtsSelect").value = s.courts;
 
         if (players.length > 0) {
@@ -154,6 +166,7 @@
 
       players = normalizePlayers(activeNames);
 
+      // 全員参加（初期）
       schedule = {};
       players.forEach(p => schedule[p.name] = [{ from: 1, to: 9999 }]);
       saveSchedule(schedule);
@@ -169,7 +182,8 @@
       createNextRound();
     }
 
-    function createNextRound() {
+    // グローバル（onclick用）
+    window.createNextRound = function createNextRound() {
       schedule = getSchedule() || schedule || {};
       const courtCount = Number(document.getElementById("courtsSelect").value);
 
@@ -185,14 +199,6 @@
       roundNumber++;
       saveState();
       repopulateSelects();
-    }
-
-    // ✅ タイマーを「最新の試合の下」に移動させる
-    function moveTimerUnderLatestMatch(latestMatchBox) {
-      const timer = document.getElementById("timerBlock");
-      if (!timer) return;
-      // latestMatchBox の直後にタイマーを移動（DOM移動なので常に最新の下になる）
-      latestMatchBox.after(timer);
     }
 
     function renderRound(rounds, refs, benches) {
@@ -229,11 +235,37 @@
 
       area.appendChild(box);
 
-      // ✅ ここでタイマーを「最新試合の直下」に移動
-      moveTimerUnderLatestMatch(box);
+      // ✅ タイマー＆次ボタンを「最新試合の直下」に移動
+      moveTimerUnder(box);
+      moveNextButtonUnderTimer();
+      setNextButton();
+    }
 
+    function setNextButton() {
       document.getElementById("nextRoundContainer").innerHTML =
         `<button onclick="createNextRound()">次の試合を作成</button>`;
+    }
+
+    function moveTimerUnder(latestMatchBox) {
+      const timer = document.getElementById("timerBlock");
+      if (!timer || !latestMatchBox) return;
+      latestMatchBox.after(timer);
+    }
+
+    function moveNextButtonUnderTimer() {
+      const timer = document.getElementById("timerBlock");
+      const next = document.getElementById("nextRoundContainer");
+      if (!timer || !next) return;
+      timer.after(next);
+    }
+
+    function moveTimerAndNextUnderLatest() {
+      const roundsEl = document.getElementById("rounds");
+      const matchRounds = roundsEl.querySelectorAll(".match-round");
+      if (matchRounds.length === 0) return;
+      const latest = matchRounds[matchRounds.length - 1];
+      moveTimerUnder(latest);
+      moveNextButtonUnderTimer();
     }
 
     function renderPlayerTable() {
@@ -257,7 +289,6 @@
       document.getElementById("playerTable").innerHTML = html;
     }
 
-    // 途中参加/復帰・候補の出し方（保険付き）
     function repopulateSelects() {
       schedule = getSchedule() || schedule || {};
 
@@ -266,15 +297,14 @@
       const byName = new Map(players.map(p => [p.name, p]));
       const source = (all && all.length > 0) ? all : active;
 
+      // join候補：playersにいない or 抜けてる（復帰）
       const joinCandidates = [];
       source.forEach(name => {
         const p = byName.get(name);
         if (!p) {
           joinCandidates.push({ name, kind: "new" });
-        } else {
-          if (!isAvailableAtRound(name, roundNumber, schedule)) {
-            joinCandidates.push({ name, kind: "return" });
-          }
+        } else if (!isAvailableAtRound(name, roundNumber, schedule)) {
+          joinCandidates.push({ name, kind: "return" });
         }
       });
 
@@ -294,6 +324,7 @@
         });
       }
 
+      // leave候補：今参加中
       const leaveSel = document.getElementById("leaveSelect");
       leaveSel.innerHTML = "";
       const leaveCandidates = players
@@ -344,19 +375,22 @@
       if (!name) return;
 
       schedule = getSchedule() || schedule || {};
-      const already = players.find(p => p.name === name);
 
-      if (already && isAvailableAtRound(name, roundNumber, schedule)) {
+      // すでに参加中なら終了
+      const existing = players.find(p => p.name === name);
+      if (existing && isAvailableAtRound(name, roundNumber, schedule)) {
         alert("もう参加中だよ💖");
         return;
       }
 
+      // scheduleに「次の試合から参加」区間を追加
       if (!schedule[name]) schedule[name] = [];
       schedule[name].push({ from: roundNumber, to: 9999 });
       schedule[name] = mergeSegments(schedule[name]);
       saveSchedule(schedule);
 
-      if (!already) {
+      // playersにいなければ追加
+      if (!existing) {
         players.push({
           name,
           idx: players.length,
@@ -367,13 +401,15 @@
           lastRefRound: 0,
           lastRestRound: roundNumber - 1,
           joinRound: roundNumber,
-          gamesAtJoin: 0, refsAtJoin: 0, restsAtJoin: 0
+          gamesAtJoin: 0, refsAtJoin: 0, restsAtJoin: 0,
+          justJoinedRound: 0
         });
       }
 
-      // ✅ 追いつかせない補正
+      // ✅ 追いつかせない基準合わせ（common.js側でルールを崩さない処理も入ってる）
       applyJoinBaseline(players, name, roundNumber, schedule);
 
+      // activePlayersにも追加（整合）
       const act = getActivePlayers();
       if (!act.includes(name)) {
         act.push(name);
@@ -396,6 +432,7 @@
       schedule[name] = cutFromRound(schedule[name], roundNumber);
       saveSchedule(schedule);
 
+      // activePlayersからも外す（整合）
       const act = getActivePlayers().filter(n => n !== name);
       setActivePlayers(act);
 
@@ -406,11 +443,11 @@
 
     /* ===============================
        タイマー（5〜10分）+ アラーム
-       ✅ 修正点：アラーム中でも「停止」で確実に止める
+       - アラーム中も「停止」で確実に止める
     =============================== */
     const timerState = {
       running: false,
-      alarming: false,   // ★追加：アラーム鳴ってる最中
+      alarming: false,
       endAt: 0,
       tickId: null,
       audioCtx: null,
@@ -438,13 +475,17 @@
     function beepOnce(){
       const ctx = timerState.audioCtx;
       if (!ctx) return;
+
       const o = ctx.createOscillator();
       const g = ctx.createGain();
+
       o.type = "sine";
       o.frequency.value = 1100;
       g.gain.value = 0.12;
+
       o.connect(g);
       g.connect(ctx.destination);
+
       const now = ctx.currentTime;
       o.start(now);
       o.stop(now + 0.2);
@@ -460,10 +501,7 @@
         beepOnce();
         if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
         count++;
-        if (count >= 12) {
-          // 自動停止（でもユーザーはいつでも停止できる）
-          stopAlarmLoop();
-        }
+        if (count >= 12) stopAlarmLoop();
       }, 500);
     }
 
@@ -500,8 +538,8 @@
 
       const active = timerState.running || timerState.alarming;
 
-      startBtn.disabled = active;                  // 鳴ってる間も再スタートさせない
-      stopBtn.disabled  = !active;                 // ★鳴ってる間は停止できる
+      startBtn.disabled = active;
+      stopBtn.disabled  = !active;
       sel.disabled      = active;
 
       stopBtn.textContent = timerState.alarming ? "アラーム停止" : "停止";
@@ -522,7 +560,7 @@
     function startTimer(){
       const minutes = Number(document.getElementById("timerMinutes").value || 5);
 
-      stopAlarmLoop();             // 鳴ってたら止める
+      stopAlarmLoop();
       timerState.running = true;
       timerState.endAt = Date.now() + minutes * 60 * 1000;
 
@@ -535,8 +573,6 @@
     }
 
     async function finishTimer(){
-      if (!timerState.running && !timerState.alarming) return;
-
       if (timerState.tickId) {
         clearInterval(timerState.tickId);
         timerState.tickId = null;
@@ -550,7 +586,6 @@
         await ensureAudioReady();
         startAlarmLoop();
       } catch(e) {
-        // 音が出ない端末でもUIは動かす
         timerState.alarming = true;
         updateTimerUI();
       }
@@ -559,7 +594,6 @@
     }
 
     async function stopTimer(){
-      // ★停止は「カウント中」でも「アラーム中」でも効く
       stopAlarmLoop();
 
       if (timerState.tickId) {
@@ -581,38 +615,28 @@
       const sel = document.getElementById("timerMinutes");
       const display = document.getElementById("timerDisplay");
 
-      const minutes = Number(sel.value || 5);
-      display.textContent = `${pad2(minutes)}:00`;
+      display.textContent = `${pad2(Number(sel.value || 5))}:00`;
       updateTimerUI();
 
       sel.addEventListener("change", () => {
         if (!timerState.running && !timerState.alarming) {
-          const m = Number(sel.value || 5);
-          display.textContent = `${pad2(m)}:00`;
+          display.textContent = `${pad2(Number(sel.value || 5))}:00`;
         }
       });
 
       document.getElementById("timerStartBtn").addEventListener("click", async () => {
-        await ensureAudioReady(); // Start押した時点で音許可
+        await ensureAudioReady();
         await requestWakeLock();
         startTimer();
       });
 
       document.getElementById("timerStopBtn").addEventListener("click", stopTimer);
 
-      // アラーム中に「表示タップでも止めたい」保険（任意だけど便利）
+      // 表示タップでも止められる（アラーム中だけ）
       display.addEventListener("click", () => {
         if (timerState.alarming) stopTimer();
       });
-
-      window.addEventListener("beforeunload", () => {
-        stopAlarmLoop();
-        if (timerState.tickId) clearInterval(timerState.tickId);
-      });
     }
-
-    // グローバルにしてonclickから呼べるように
-    window.createNextRound = createNextRound;
   </script>
 </body>
 </html>
